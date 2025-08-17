@@ -101,7 +101,7 @@ if not st.session_state["logado"]:
 # Página principal (rede neural)
 # ========================
 if st.session_state["logado"]:
-    st.markdown("<h1 style='text-align: center; color:#ff4b4b;'>🎯 Previsão Lotofácil</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color:#ff4b4b;'>🎯 Previsão IA Lotofácil</h1>", unsafe_allow_html=True)
     st.markdown(
         "<p style='text-align: center; font-size:18px;'>Carregue seu histórico e veja as dezenas mais prováveis de sair!</p>",
         unsafe_allow_html=True)
