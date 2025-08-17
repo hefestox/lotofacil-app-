@@ -53,7 +53,7 @@ def gerar_jogos(historico_binario, excluir_dezenas=[], qtd_jogos=1):
     return jogos, media
 
 # ========================
-# Interface Streamlit
+# Configuração da página
 # ========================
 st.set_page_config(
     page_title="Previsão Lotofácil",
@@ -62,16 +62,29 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Inicializar estado de login
+# Inicializar estados
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
+if "pagou" not in st.session_state:
+    st.session_state["pagou"] = False
 
 usuarios = carregar_usuarios()
 
 # ========================
-# Login
+# Etapa de pagamento PIX
 # ========================
-if not st.session_state["logado"]:
+st.markdown("<h1 style='text-align: center; color:#ff4b4b;'>💰 Pagamento PIX - R$27,00</h1>", unsafe_allow_html=True)
+st.image("qrcode_pix.png", caption="Escaneie para pagar via PIX", use_container_width=False, width=200)
+st.info("Após enviar o pagamento, clique no botão abaixo para liberar o login.")
+
+if st.button("Já realizei o pagamento"):
+    st.session_state["pagou"] = True
+    st.success("Pagamento registrado! Faça login usando a barra lateral.")
+
+# ========================
+# Login (aparece apenas após pagamento)
+# ========================
+if st.session_state["pagou"] and not st.session_state["logado"]:
     st.sidebar.title("🔐 Login")
     usuario = st.sidebar.text_input("Usuário")
     senha = st.sidebar.text_input("Senha", type="password")
@@ -85,7 +98,7 @@ if not st.session_state["logado"]:
             st.sidebar.error("Usuário ou senha incorretos.")
 
 # ========================
-# Página principal
+# Página principal (aparece apenas após login)
 # ========================
 if st.session_state["logado"]:
     st.markdown("<h1 style='text-align: center; color:#ff4b4b;'>🎯 Previsão Lotofácil</h1>", unsafe_allow_html=True)
@@ -94,7 +107,6 @@ if st.session_state["logado"]:
     arquivo = st.file_uploader("Escolha o arquivo Excel com histórico", type=["xls", "xlsx"])
 
     if arquivo is not None:
-
         @st.cache_data
         def carregar_historico(arquivo):
             df = pd.read_excel(arquivo)
@@ -143,23 +155,7 @@ if st.session_state["logado"]:
                 fig.update_layout(xaxis=dict(dtick=1))
                 st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("Histórico de concursos")
-        st.dataframe(df, use_container_width=True)
-
-    # ========================
-    # Seção de Pagamento PIX
-    # ========================
-    st.markdown("---")
-    st.markdown("<h2 style='text-align:center; color:#4CAF50;'>💰 Pagamento PIX</h2>", unsafe_allow_html=True)
-    st.markdown(
-        "<p style='text-align:center; font-size:16px;'>"
-        "Valor: <b>R$25,00</b><br>"
-        "Escaneie o QR Code abaixo para realizar o pagamento.<br>"
-        "Após o pagamento, envie o comprovante para o suporte. "
-        "O seu login e senha serão enviados assim que confirmado o pagamento."
-        "</p>",
-        unsafe_allow_html=True
-    )
-
-    # Exibe o QR Code menor
-    st.image("qrcode_pix.png", caption="", width=200, use_container_width=False)
+    if st.sidebar.button("Sair"):
+        st.session_state["logado"] = False
+        st.session_state["pagou"] = False
+        st.success("Você saiu do sistema. Atualize a página para ver o QR Code novamente.")
