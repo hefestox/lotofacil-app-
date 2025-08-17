@@ -67,9 +67,15 @@ def treinar_modelo(historico_binario):
     return model
 
 
-def gerar_jogos_nn(model, historico_binario, qtd_jogos=1):
+def gerar_jogos_nn(model, historico_binario, qtd_jogos=1, excluir_dezenas=[]):
     ult_linha = historico_binario[-1].reshape(1, 25)
     predicao = model.predict(ult_linha, verbose=0)[0]
+
+    # Excluir dezenas
+    for dez in excluir_dezenas:
+        if 1 <= dez <= 25:
+            predicao[dez - 1] = 0
+
     dezenas_ordenadas = np.argsort(predicao)[-15:] + 1
     jogos = []
     while len(jogos) < qtd_jogos:
@@ -77,18 +83,14 @@ def gerar_jogos_nn(model, historico_binario, qtd_jogos=1):
         jogo = tuple(sorted(dezenas_ordenadas[:15]))
         if jogo not in jogos:
             jogos.append(jogo)
-    return jogos, predicao
+    media_predicao = np.mean([predicao for _ in jogos], axis=0)  # média para gráfico
+    return jogos, media_predicao
 
 
 # ========================
 # Configuração Streamlit
 # ========================
-st.set_page_config(
-    page_title="Previsão Lotofácil",
-    layout="wide",
-    page_icon="🎯",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Previsão Lotofácil", layout="wide", page_icon="🎯", initial_sidebar_state="expanded")
 
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
@@ -103,7 +105,6 @@ if not st.session_state["logado"]:
     usuario = st.sidebar.text_input("Usuário")
     senha = st.sidebar.text_input("Senha", type="password")
     entrar = st.sidebar.button("Entrar")
-
     if entrar:
         if verificar_login(usuario, senha, usuarios):
             st.session_state["logado"] = True
@@ -137,7 +138,7 @@ if st.session_state["logado"]:
             st.subheader("Escolha dezenas para excluir")
             excluir_dezenas = st.multiselect("Selecione dezenas (opcional)", options=list(range(1, 26)))
             st.subheader("Quantidade de jogos")
-            qtd_jogos = st.number_input("Quantos jogos gerar?", min_value=1, max_value=10, value=1, step=1)
+            qtd_jogos = st.number_input("Quantos jogos gerar?", min_value=1, max_value=20, value=1, step=1)
 
         with col2:
             if st.button("Gerar Previsões"):
@@ -154,7 +155,7 @@ if st.session_state["logado"]:
                 # Treinar rede neural e gerar jogos
                 model = treinar_modelo(historico_binario)
                 if model:
-                    jogos_nn, media_nn = gerar_jogos_nn(model, historico_binario, qtd_jogos)
+                    jogos_nn, media_nn = gerar_jogos_nn(model, historico_binario, qtd_jogos, excluir_dezenas)
                     st.subheader(f"Jogos sugeridos pela Rede Neural ({qtd_jogos} jogos):")
                     for idx, jogo in enumerate(jogos_nn):
                         cores = [dez_colors[i % len(dez_colors)] for i in range(15)]
@@ -164,12 +165,13 @@ if st.session_state["logado"]:
                                         for i, num in enumerate(jogo)]),
                             unsafe_allow_html=True
                         )
+
                     # Gráfico NN
                     fig_nn = px.bar(
                         x=list(range(1, 26)),
                         y=media_nn,
                         labels={"x": "Dezenas", "y": "Probabilidade"},
-                        title="Probabilidade de cada dezena (NN)",
+                        title="Probabilidade média das dezenas (NN)",
                         color=media_nn,
                         color_continuous_scale="plasma"
                     )
