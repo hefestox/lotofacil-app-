@@ -62,6 +62,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Inicializar estado de login
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
 
@@ -111,7 +112,10 @@ if st.session_state["logado"]:
         col1, col2 = st.columns([1, 1])
         with col1:
             st.subheader("Escolha dezenas para excluir")
-            excluir_dezenas = st.multiselect("Selecione dezenas (opcional)", options=list(range(1, 26)))
+            excluir_dezenas = st.multiselect(
+                "Selecione dezenas (opcional)",
+                options=list(range(1, 26))
+            )
             st.subheader("Quantidade de jogos")
             qtd_jogos = st.number_input("Quantos jogos gerar?", min_value=1, max_value=10, value=1, step=1)
 
@@ -143,21 +147,19 @@ if st.session_state["logado"]:
         st.dataframe(df, use_container_width=True)
 
     # ========================
-    # Página de pagamento PIX com botão
+    # Seção de Pagamento PIX
     # ========================
     st.markdown("---")
-    st.markdown("<h2 style='text-align: center; color:#228B22;'>💰 Pagamento</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center;'>Valor: <b>R$27,00</b></p>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center;'>Faça o pagamento via PIX e envie o comprovante.</p>", unsafe_allow_html=True)
-    st.image("qrcode_pix.png", caption="QR Code PIX - Valor: R$27", use_column_width=True)
+    st.markdown("<h2 style='text-align:center; color:#4CAF50;'>💰 Pagamento PIX</h2>", unsafe_allow_html=True)
+    st.markdown(
+        "<p style='text-align:center; font-size:16px;'>"
+        "Valor: <b>R$25,00</b><br>"
+        "Escaneie o QR Code abaixo para realizar o pagamento.<br>"
+        "Após o pagamento, envie o comprovante para o suporte. "
+        "O seu login e senha serão enviados assim que confirmado o pagamento."
+        "</p>",
+        unsafe_allow_html=True
+    )
 
-    # Botão de comprovante
-    if "pagamento_enviado" not in st.session_state:
-        st.session_state["pagamento_enviado"] = False
-
-    if not st.session_state["pagamento_enviado"]:
-        if st.button("✅ Comprovante Enviado"):
-            st.session_state["pagamento_enviado"] = True
-            st.success("Pagamento registrado! Obrigado pelo envio do comprovante.")
-    else:
-        st.info("Pagamento já enviado e registrado.")
+    # Exibe o QR Code menor
+    st.image("qrcode_pix.png", caption="", width=200, use_container_width=False)
