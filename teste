@@ -1,0 +1,82 @@
+import numpy as np
+from tensorflow import keras
+from tensorflow.keras import layers
+
+# Função para criar uma rede neural aprimorada
+def criar_rede_neural(input_dim):
+    model = keras.Sequential([
+        layers.Dense(128, activation='relu', input_dim=input_dim),
+        layers.Dropout(0.5),
+        layers.Dense(64, activation='relu'),
+        layers.Dropout(0.3),
+        layers.Dense(1, activation='sigmoid')
+    ])
+
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+    return model
+
+# Função para suavizar as frequências
+def suavizar_frequencia(frequencias):
+    return np.convolve(frequencias, np.ones(3)/3, mode='valid')
+
+# Cria um dicionário para armazenar o histórico dos números que saíram na roleta
+historico_roleta = {i: 0 for i in range(0, 37)}
+
+# Parâmetros da rede neural
+num_rodadas_treino = 1000
+num_dezenas = 1
+
+# Parâmetros da estratégia de stake
+stake_total = 5  # Stake total em reais
+stake_minima = 1  # Stake mínima em reais
+
+# Criação e treinamento da rede neural
+input_data = []
+target_data = []
+
+for _ in range(num_rodadas_treino):
+    numeros = np.random.choice(range(1, 37), size=num_dezenas, replace=False)
+    resultado = 1 if np.random.rand() < 0.5 else 0  # Simula se houve proteção ou não
+
+    input_data.append(list(numeros))
+    target_data.append(resultado)
+
+    for numero in numeros:
+        historico_roleta[numero] += 1
+
+# Transforma os dados em arrays numpy
+input_data = np.array(input_data)
+target_data = np.array(target_data)
+
+# Cria e treina a rede neural
+modelo = criar_rede_neural(num_dezenas)
+modelo.fit(input_data, target_data, epochs=30, verbose=2, validation_split=0.2)
+
+# Loop para perguntar ao usuário os números que saíram e recomendar as dúzias com alta e baixa frequência
+while True:
+    # Solicita ao usuário que informe os números que saíram na última rodada
+    numeros = input("Informe os números que saíram (separados por vírgula): ")
+    numeros = [int(numero) for numero in numeros.split(",")]
+
+    # Atualiza o dicionário de roleta com os novos números fornecidos pelo usuário
+    for numero in numeros:
+        historico_roleta[numero] += 1
+
+    # Suaviza as frequências para análise mais estável
+    frequencias_suavizadas = suavizar_frequencia(list(historico_roleta.values()))
+
+    # Encontra a maior e a menor frequência suavizada de aparição entre todas as dúzias
+    max_frequencia_duzias = max(frequencias_suavizadas)
+    min_frequencia_duzias = min(frequencias_suavizadas)
+
+    # Recomendações (pode ser ajustado conforme necessário)
+    duzia_alta_frequencia = [i for i, freq in enumerate(frequencias_suavizadas, 1) if freq == max_frequencia_duzias]
+    duzia_baixa_frequencia = [i for i, freq in enumerate(frequencias_suavizadas, 1) if freq == min_frequencia_duzias]
+
+    print("Dúzias com alta frequência:", duzia_alta_frequencia)
+    print("Dúzias com baixa frequência:", duzia_baixa_frequencia)
+    print("Recomenda-se apostar na seguinte coluna de menor frequência:", coluna_menor_frequencia)
+    print("Stake para lucro: {:.2f} reais".format(stake_lucro))
+    print("Stake para proteção: {:.2f} reais".format(stake_protecao))
+    print("Sugestão de dezenas adicionais:", dezenas_adicionais)

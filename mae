@@ -1,0 +1,106 @@
+import numpy as np
+from tensorflow import keras
+from tensorflow.keras import layers
+
+# Função para criar uma rede neural com rotação e força do crupiê
+def criar_rede_neural(input_dim):
+    model = keras.Sequential([
+        layers.Dense(64, activation='relu', input_dim=input_dim),
+        layers.Dense(32, activation='relu'),
+        layers.Dense(1, activation='sigmoid')
+    ])
+
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    return model
+
+# Cria um dicionário para armazenar o histórico dos números que saíram na roleta
+historico_roleta = {i: 0 for i in range(0, 37)}
+
+# Dicionário para armazenar a frequência de cada dúzia e coluna
+duzias = {"1a12": 0, "13a24": 0, "25a36": 0}
+colunas = {"1a34": 0, "2a35": 0, "3a36": 0}
+
+# Parâmetros da rede neural
+num_rodadas_treino = 1000
+num_dezenas = 3
+
+# Criação e treinamento da rede neural
+input_data = []
+target_data = []
+
+for _ in range(num_rodadas_treino):
+    numeros = np.random.choice(range(1, 37), size=num_dezenas, replace=False)
+    resultado = 1 if np.random.rand() < 0.5 else 0  # Simula se houve proteção ou não
+    rotacao_crupie = np.random.uniform(0, 360)  # Exemplo de geração aleatória de rotação
+    forca_crupie = np.random.uniform(0, 10)  # Exemplo de geração aleatória de força
+
+    input_data.append(list(numeros) + [rotacao_crupie, forca_crupie])
+    target_data.append(resultado)
+
+    for numero in numeros:
+        historico_roleta[numero] += 1
+
+# Transforma os dados em arrays numpy
+input_data = np.array(input_data)
+target_data = np.array(target_data)
+
+# Cria e treina a rede neural
+modelo = criar_rede_neural(num_dezenas + 2)  # +2 para a rotação e força do crupiê
+modelo.fit(input_data, target_data, epochs=20, verbose=2)
+
+# Loop para perguntar ao usuário os números que saíram e recomendar as dúzias com alta e baixa frequência
+while True:
+    # Solicita ao usuário que informe os números que saíram, rotação e força do crupiê
+    entrada_usuario = input("Informe os números que saíram, rotação e força do crupiê (separados por vírgula): ")
+    valores = list(map(float, entrada_usuario.split(",")))
+
+    # Separe os números que saíram do restante dos valores
+    numeros = valores[:-2]
+    rotacao_crupie, forca_crupie = valores[-2:]
+
+    # Atualiza o dicionário de roleta com os novos números fornecidos pelo usuário
+    for numero in map(int, numeros):
+        historico_roleta[numero] += 1
+
+    # Atualiza o dicionário de frequências das dúzias e colunas
+    for numero, frequencia in historico_roleta.items():
+        if numero == 0:
+            continue
+        if numero in range(1, 13):
+            duzias["1a12"] = frequencia
+        elif numero in range(13, 25):
+            duzias["13a24"] = frequencia
+        elif numero in range(25, 37):
+            duzias["25a36"] = frequencia
+
+        coluna = (numero - 1) % 3 + 1
+        colunas["{}a{}".format(coluna, coluna + 34)] = frequencia
+
+    # Encontra a maior e a menor frequência de aparição entre todas as dúzias e colunas
+    max_frequencia_duzias = max(duzias.values())
+    min_frequencia_duzias = min(duzias.values())
+    max_frequencia_colunas = max(colunas.values())
+    min_frequencia_colunas = min(colunas.values())
+
+    # Recomenda ao usuário uma opção com base na alta frequência de aparição das dúzias
+    duzia_alta_frequencia = [duzia for duzia, frequencia in duzias.items() if frequencia == max_frequencia_duzias]
+
+    # Recomenda ao usuário uma opção com base na baixa frequência de aparição das dúzias
+    duzia_baixa_frequencia = [duzia for duzia, frequencia in duzias.items() if frequencia == min_frequencia_duzias]
+
+    # Recomenda ao usuário uma opção com base na alta frequência de aparição das colunas
+    coluna_alta_frequencia = [coluna for coluna, frequencia in colunas.items() if frequencia == max_frequencia_colunas]
+
+    # Recomenda ao usuário uma opção com base na baixa frequência de aparição das colunas
+    coluna_baixa_frequencia = [coluna for coluna, frequencia in colunas.items() if frequencia == min_frequencia_colunas]
+
+    # Sugestão de dezenas adicionais com base na rede neural
+    dezenas_adicionais = list(set(np.random.choice(range(1, 37), size=num_dezenas, replace=False)) - set(map(int, numeros)))
+
+    # Exibir resultados
+    print("A rede neural sugere proteção nas seguintes dúzias:", duzia_alta_frequencia)
+    print("Recomenda-se apostar na seguinte dúzia de alta frequência:", duzia_alta_frequencia)
+    print("Recomenda-se apostar na seguinte dúzia de baixa frequência:", duzia_baixa_frequencia)
+    print("Recomenda-se apostar na seguinte coluna de alta frequência:", coluna_alta_frequencia)
+    print("Recomenda-se apostar na seguinte coluna de baixa frequência:", coluna_baixa_frequencia)
+    print("Sugestão de dezenas adicionais:", dezenas_adicionais)
