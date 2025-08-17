@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 import json
 import hashlib
+from tensorflow.keras.models import load_model
 
 # ========================
 # Funções de login
@@ -27,7 +28,7 @@ def verificar_login(usuario, senha, usuarios):
     return False
 
 # ========================
-# Funções auxiliares do app
+# Funções auxiliares
 # ========================
 def converter_para_binario(historico):
     historico_binario = []
@@ -43,6 +44,27 @@ def gerar_previsao(historico_binario, excluir_dezenas=[]):
             media[dez - 1] = 0
     dezenas_sugeridas = np.argsort(media)[-15:] + 1
     return sorted(list(dezenas_sugeridas)), media
+
+# ========================
+# Rede Neural (offline)
+# ========================
+def gerar_jogos_nn_offline(historico_binario, qtd_jogos=1):
+    try:
+        model = load_model("modelo_nn.h5")  # Modelo pré-treinado
+    except:
+        st.error("Modelo 'modelo_nn.h5' não encontrado. Treine a NN offline primeiro.")
+        return [], []
+
+    ult_linha = historico_binario[-1].reshape(1, 25)
+    predicao = model.predict(ult_linha, verbose=0)[0]
+    dezenas_ordenadas = np.argsort(predicao)[-15:] + 1
+    jogos = []
+    while len(jogos) < qtd_jogos:
+        np.random.shuffle(dezenas_ordenadas)
+        jogo = tuple(sorted(dezenas_ordenadas[:15]))
+        if jogo not in jogos:
+            jogos.append(jogo)
+    return jogos, predicao
 
 # ========================
 # Interface Streamlit
@@ -109,29 +131,44 @@ if st.session_state["logado"]:
                 "Selecione dezenas (opcional)",
                 options=list(range(1, 26))
             )
+            st.subheader("Quantidade de jogos")
+            qtd_jogos = st.number_input(
+                "Quantos jogos gerar?",
+                min_value=1,
+                max_value=10,
+                value=1,
+                step=1
+            )
+
         with col2:
-            if st.button("Gerar Previsão"):
-                dezenas, media = gerar_previsao(historico_binario, excluir_dezenas)
-                st.subheader("Dezenas sugeridas:")
+            if st.button("Gerar Previsões NN"):
+                jogos, media = gerar_jogos_nn_offline(historico_binario, qtd_jogos)
+                if jogos:
+                    st.subheader("Jogos sugeridos pela Rede Neural:")
+                    dez_colors = px.colors.qualitative.Pastel
+                    for idx, jogo in enumerate(jogos):
+                        cores = [dez_colors[i % len(dez_colors)] for i in range(15)]
+                        st.markdown(
+                            "".join([
+                                f"<span style='display:inline-block; margin:3px; padding:5px; background-color:{cores[i]}; border-radius:5px;'>{num}</span>"
+                                for i, num in enumerate(jogo)
+                            ]),
+                            unsafe_allow_html=True
+                        )
 
-                # Dezenas em cards coloridos
-                dez_colors = px.colors.qualitative.Pastel
-                for idx, dez in enumerate(dezenas):
-                    color = dez_colors[idx % len(dez_colors)]
-                    st.markdown(f"<div style='display:inline-block; margin:5px; padding:10px; background-color:{color}; border-radius:10px; font-size:20px;'>{dez}</div>", unsafe_allow_html=True)
-
-                # Gráfico de probabilidade colorido
-                fig = px.bar(
-                    x=list(range(1, 26)),
-                    y=media,
-                    labels={"x": "Dezenas", "y": "Probabilidade"},
-                    title="Probabilidade de cada dezena",
-                    color=media,
-                    color_continuous_scale="plasma"
-                )
-                fig.update_layout(xaxis=dict(dtick=1))
-                st.plotly_chart(fig, use_container_width=True)
+                    # Gráfico de probabilidade
+                    fig = px.bar(
+                        x=list(range(1, 26)),
+                        y=media,
+                        labels={"x": "Dezenas", "y": "Probabilidade"},
+                        title="Probabilidade de cada dezena (NN)",
+                        color=media,
+                        color_continuous_scale="plasma"
+                    )
+                    fig.update_layout(xaxis=dict(dtick=1))
+                    st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Histórico de concursos")
         st.dataframe(df, use_container_width=True)
+
 
