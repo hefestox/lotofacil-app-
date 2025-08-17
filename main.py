@@ -111,14 +111,32 @@ if st.session_state["logado"]:
             )
         with col2:
             if st.button("Gerar Previsão"):
-                dezenas, media = gerar_previsao(historico_binario, excluir_dezenas)
-                st.subheader("Dezenas sugeridas:")
+                # Quantidade de jogos que o usuário quer gerar
+                qtd_jogos = st.number_input(
+                    "Quantos jogos deseja gerar?",
+                    min_value=1,
+                    max_value=10,
+                    value=1,
+                    step=1
+                )
 
-                # Dezenas em cards coloridos
-                dez_colors = px.colors.qualitative.Pastel
-                for idx, dez in enumerate(dezenas):
-                    color = dez_colors[idx % len(dez_colors)]
-                    st.markdown(f"<div style='display:inline-block; margin:5px; padding:10px; background-color:{color}; border-radius:10px; font-size:20px;'>{dez}</div>", unsafe_allow_html=True)
+                dezenas, media = gerar_previsao(historico_binario, excluir_dezenas)
+
+                # Gerar os jogos
+                jogos = []
+                for i in range(qtd_jogos):
+                    jogo = np.random.choice(dezenas, size=15, replace=False)
+                    jogos.append(sorted(jogo))
+
+                # Exibir jogos
+                st.subheader(f"Previsão de {qtd_jogos} jogo(s)")
+                for idx, jogo in enumerate(jogos):
+                    st.markdown(
+                        f"<div style='margin-bottom:10px;'>Jogo {idx+1}: " +
+                        " ".join([f"<span style='color:#ff4b4b; font-weight:bold;'>{d}</span>" for d in jogo]) +
+                        "</div>",
+                        unsafe_allow_html=True
+                    )
 
                 # Gráfico de probabilidade colorido
                 fig = px.bar(
@@ -134,4 +152,3 @@ if st.session_state["logado"]:
 
         st.subheader("Histórico de concursos")
         st.dataframe(df, use_container_width=True)
-
