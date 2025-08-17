@@ -1,4 +1,4 @@
-consiguir coloca codigo para rodar perfeitamente. porem que me ajuda coloca para treinar em off : e executar apenas  como vc sugeriu encima : import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
