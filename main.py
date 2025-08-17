@@ -124,12 +124,12 @@ if st.session_state["logado"]:
 
         st.success("✅ Arquivo carregado e convertido com sucesso!")
 
-        if st.button("Gerar Previsão com Rede Neural"):
+        if st.button("Gerar Previsão Inteligente"):
             modelo = treinar_rede_neural(historico_binario)
             ultimo = historico_binario[-1]
             jogo_previsto, probabilidade = prever_jogo(modelo, ultimo)
 
-            st.subheader("🎯 Jogo Previsto pela Rede Neural:")
+            st.subheader("🎯 Jogo Previsto  :")
             dez_colors = px.colors.qualitative.Pastel
             st.markdown(
                 "".join([
