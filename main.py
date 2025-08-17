@@ -4,6 +4,8 @@ import numpy as np
 import plotly.express as px
 import json
 import hashlib
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
 
 # ========================
 # Funções de login
@@ -27,7 +29,7 @@ def verificar_login(usuario, senha, usuarios):
     return False
 
 # ========================
-# Funções auxiliares do app
+# Funções auxiliares
 # ========================
 def converter_para_binario(historico):
     historico_binario = []
@@ -36,13 +38,32 @@ def converter_para_binario(historico):
         historico_binario.append(binario)
     return np.array(historico_binario)
 
-def gerar_previsao(historico_binario, excluir_dezenas=[]):
-    media = np.mean(historico_binario, axis=0)
-    for dez in excluir_dezenas:
-        if 1 <= dez <= 25:
-            media[dez - 1] = 0
-    dezenas_sugeridas = np.argsort(media)[-15:] + 1
-    return sorted(list(dezenas_sugeridas)), media
+def treinar_modelo(historico_binario):
+    if len(historico_binario) < 2:
+        st.warning("Histórico muito curto para treinar a rede neural.")
+        return None
+    X = historico_binario[:-1]
+    Y = historico_binario[1:]
+    model = Sequential([
+        Dense(64, activation='relu', input_dim=25),
+        Dense(128, activation='relu'),
+        Dense(25, activation='sigmoid')
+    ])
+    model.compile(optimizer='adam', loss='binary_crossentropy')
+    model.fit(X, Y, epochs=50, batch_size=8, verbose=0)
+    return model
+
+def gerar_jogos_nn(model, historico_binario, qtd_jogos=1):
+    ult_linha = historico_binario[-1].reshape(1, 25)
+    predicao = model.predict(ult_linha, verbose=0)[0]
+    dezenas_ordenadas = np.argsort(predicao)[-15:] + 1
+    jogos = []
+    while len(jogos) < qtd_jogos:
+        np.random.shuffle(dezenas_ordenadas)
+        jogo = tuple(sorted(dezenas_ordenadas[:15]))
+        if jogo not in jogos:
+            jogos.append(jogo)
+    return jogos, predicao
 
 # ========================
 # Interface Streamlit
@@ -54,7 +75,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Inicializar estado de login
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
 
@@ -80,14 +100,8 @@ if not st.session_state["logado"]:
 # Página principal
 # ========================
 if st.session_state["logado"]:
-    st.markdown(
-        "<h1 style='text-align: center; color:#ff4b4b;'>🎯 Previsão Lotofácil</h1>",
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        "<p style='text-align: center; font-size:18px;'>Carregue seu histórico e veja as dezenas mais prováveis de sair!</p>",
-        unsafe_allow_html=True
-    )
+    st.markdown("<h1 style='text-align: center; color:#ff4b4b;'>🎯 Previsão Lotofácil</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-size:18px;'>Carregue seu histórico e veja as dezenas mais prováveis de sair!</p>", unsafe_allow_html=True)
 
     arquivo = st.file_uploader("Escolha o arquivo Excel com histórico", type=["xls", "xlsx"])
 
@@ -109,46 +123,34 @@ if st.session_state["logado"]:
                 "Selecione dezenas (opcional)",
                 options=list(range(1, 26))
             )
+            st.subheader("Quantidade de jogos")
+            qtd_jogos = st.number_input("Quantos jogos gerar?", min_value=1, max_value=10, value=1, step=1)
+
         with col2:
-            if st.button("Gerar Previsão"):
-                # Quantidade de jogos que o usuário quer gerar
-                qtd_jogos = st.number_input(
-                    "Quantos jogos deseja gerar?",
-                    min_value=1,
-                    max_value=10,
-                    value=1,
-                    step=1
-                )
+            if st.button("Gerar Previsões NN"):
+                model = treinar_modelo(historico_binario)
+                if model:
+                    jogos, media = gerar_jogos_nn(model, historico_binario, qtd_jogos)
+                    st.subheader("Jogos sugeridos pela Rede Neural:")
+                    dez_colors = px.colors.qualitative.Pastel
+                    for idx, jogo in enumerate(jogos):
+                        cores = [dez_colors[i % len(dez_colors)] for i in range(15)]
+                        st.markdown(
+                            "".join([f"<span style='display:inline-block; margin:3px; padding:5px; background-color:{cores[i]}; border-radius:5px;'>{num}</span>" for i, num in enumerate(jogo)]),
+                            unsafe_allow_html=True
+                        )
 
-                dezenas, media = gerar_previsao(historico_binario, excluir_dezenas)
-
-                # Gerar os jogos
-                jogos = []
-                for i in range(qtd_jogos):
-                    jogo = np.random.choice(dezenas, size=15, replace=False)
-                    jogos.append(sorted(jogo))
-
-                # Exibir jogos
-                st.subheader(f"Previsão de {qtd_jogos} jogo(s)")
-                for idx, jogo in enumerate(jogos):
-                    st.markdown(
-                        f"<div style='margin-bottom:10px;'>Jogo {idx+1}: " +
-                        " ".join([f"<span style='color:#ff4b4b; font-weight:bold;'>{d}</span>" for d in jogo]) +
-                        "</div>",
-                        unsafe_allow_html=True
+                    # Gráfico de probabilidade
+                    fig = px.bar(
+                        x=list(range(1, 26)),
+                        y=media,
+                        labels={"x": "Dezenas", "y": "Probabilidade"},
+                        title="Probabilidade de cada dezena (NN)",
+                        color=media,
+                        color_continuous_scale="plasma"
                     )
-
-                # Gráfico de probabilidade colorido
-                fig = px.bar(
-                    x=list(range(1, 26)),
-                    y=media,
-                    labels={"x": "Dezenas", "y": "Probabilidade"},
-                    title="Probabilidade de cada dezena",
-                    color=media,
-                    color_continuous_scale="plasma"
-                )
-                fig.update_layout(xaxis=dict(dtick=1))
-                st.plotly_chart(fig, use_container_width=True)
+                    fig.update_layout(xaxis=dict(dtick=1))
+                    st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Histórico de concursos")
         st.dataframe(df, use_container_width=True)
