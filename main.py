@@ -4,8 +4,11 @@ import numpy as np
 import plotly.express as px
 import json
 import hashlib
-from tensorflow.keras.models import Sequential
+import os
+from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import Dense
+from tensorflow.keras.optimizers import Adam
+
 
 # ========================
 # Funções de login
@@ -15,11 +18,12 @@ def carregar_usuarios():
         with open("usuarios.json", "r") as f:
             return json.load(f)
     except FileNotFoundError:
-        st.error("Arquivo de usuários não encontrado! Crie 'usuarios.json' na pasta do projeto.")
+        st.error("Arquivo de usuários não encontrado! Crie 'usuarios.json'.")
         return {}
     except json.JSONDecodeError:
         st.error("Arquivo de usuários está vazio ou com erro de formatação JSON.")
         return {}
+
 
 def verificar_login(usuario, senha, usuarios):
     if usuario in usuarios:
@@ -28,8 +32,9 @@ def verificar_login(usuario, senha, usuarios):
             return True
     return False
 
+
 # ========================
-# Funções auxiliares
+# Funções auxiliares do app
 # ========================
 def converter_para_binario(historico):
     historico_binario = []
@@ -38,32 +43,41 @@ def converter_para_binario(historico):
         historico_binario.append(binario)
     return np.array(historico_binario)
 
+
 def treinar_modelo(historico_binario):
-    if len(historico_binario) < 2:
-        st.warning("Histórico muito curto para treinar a rede neural.")
-        return None
     X = historico_binario[:-1]
-    Y = historico_binario[1:]
-    model = Sequential([
-        Dense(64, activation='relu', input_dim=25),
-        Dense(128, activation='relu'),
-        Dense(25, activation='sigmoid')
-    ])
-    model.compile(optimizer='adam', loss='binary_crossentropy')
-    model.fit(X, Y, epochs=50, batch_size=8, verbose=0)
+    y = historico_binario[1:]
+
+    model = Sequential()
+    model.add(Dense(128, input_dim=25, activation='relu'))
+    model.add(Dense(64, activation='relu'))
+    model.add(Dense(25, activation='sigmoid'))
+    model.compile(loss='binary_crossentropy', optimizer=Adam(learning_rate=0.001))
+    model.fit(X, y, epochs=100, verbose=0)
+    model.save("modelo_lotofacil.h5")
     return model
 
-def gerar_jogos_nn(model, historico_binario, qtd_jogos=1):
-    ult_linha = historico_binario[-1].reshape(1, 25)
-    predicao = model.predict(ult_linha, verbose=0)[0]
-    dezenas_ordenadas = np.argsort(predicao)[-15:] + 1
+
+def carregar_ou_treinar(historico_binario):
+    if os.path.exists("modelo_lotofacil.h5"):
+        model = load_model("modelo_lotofacil.h5")
+    else:
+        model = treinar_modelo(historico_binario)
+    return model
+
+
+def gerar_previsao_nn(model, ultimo_concurso, excluir_dezenas=[], n_jogos=1):
     jogos = []
-    while len(jogos) < qtd_jogos:
-        np.random.shuffle(dezenas_ordenadas)
-        jogo = tuple(sorted(dezenas_ordenadas[:15]))
-        if jogo not in jogos:
-            jogos.append(jogo)
-    return jogos, predicao
+    base = np.array(ultimo_concurso).reshape(1, -1)
+    for _ in range(n_jogos):
+        previsao = model.predict(base)[0]
+        for dez in excluir_dezenas:
+            if 1 <= dez <= 25:
+                previsao[dez - 1] = 0
+        dezenas_sugeridas = np.argsort(previsao)[-15:] + 1
+        jogos.append(sorted(list(dezenas_sugeridas)))
+    return jogos, previsao
+
 
 # ========================
 # Interface Streamlit
@@ -88,7 +102,6 @@ if not st.session_state["logado"]:
     usuario = st.sidebar.text_input("Usuário")
     senha = st.sidebar.text_input("Senha", type="password")
     entrar = st.sidebar.button("Entrar")
-
     if entrar:
         if verificar_login(usuario, senha, usuarios):
             st.session_state["logado"] = True
@@ -100,8 +113,10 @@ if not st.session_state["logado"]:
 # Página principal
 # ========================
 if st.session_state["logado"]:
-    st.markdown("<h1 style='text-align: center; color:#ff4b4b;'>🎯 Previsão Lotofácil</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; font-size:18px;'>Carregue seu histórico e veja as dezenas mais prováveis de sair!</p>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align:center; color:#ff4b4b;'>🎯 Previsão Lotofácil</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<p style='text-align:center; font-size:18px;'>Carregue seu histórico e veja as dezenas mais prováveis de sair!</p>",
+        unsafe_allow_html=True)
 
     arquivo = st.file_uploader("Escolha o arquivo Excel com histórico", type=["xls", "xlsx"])
 
@@ -119,38 +134,25 @@ if st.session_state["logado"]:
         col1, col2 = st.columns([1, 1])
         with col1:
             st.subheader("Escolha dezenas para excluir")
-            excluir_dezenas = st.multiselect(
-                "Selecione dezenas (opcional)",
-                options=list(range(1, 26))
-            )
-            st.subheader("Quantidade de jogos")
-            qtd_jogos = st.number_input("Quantos jogos gerar?", min_value=1, max_value=10, value=1, step=1)
-
+            excluir_dezenas = st.multiselect("Selecione dezenas (opcional)", options=list(range(1, 26)))
+            n_jogos = st.number_input("Quantos jogos deseja gerar?", min_value=1, max_value=20, value=1, step=1)
         with col2:
-            if st.button("Gerar Previsões NN"):
-                model = treinar_modelo(historico_binario)
-                if model:
-                    jogos, media = gerar_jogos_nn(model, historico_binario, qtd_jogos)
-                    st.subheader("Jogos sugeridos pela Rede Neural:")
-                    dez_colors = px.colors.qualitative.Pastel
-                    for idx, jogo in enumerate(jogos):
-                        cores = [dez_colors[i % len(dez_colors)] for i in range(15)]
-                        st.markdown(
-                            "".join([f"<span style='display:inline-block; margin:3px; padding:5px; background-color:{cores[i]}; border-radius:5px;'>{num}</span>" for i, num in enumerate(jogo)]),
-                            unsafe_allow_html=True
-                        )
+            if st.button("Gerar Previsão"):
+                model = carregar_ou_treinar(historico_binario)
+                jogos, previsao_final = gerar_previsao_nn(model, historico_binario[-1], excluir_dezenas, n_jogos)
 
-                    # Gráfico de probabilidade
-                    fig = px.bar(
-                        x=list(range(1, 26)),
-                        y=media,
-                        labels={"x": "Dezenas", "y": "Probabilidade"},
-                        title="Probabilidade de cada dezena (NN)",
-                        color=media,
-                        color_continuous_scale="plasma"
-                    )
-                    fig.update_layout(xaxis=dict(dtick=1))
-                    st.plotly_chart(fig, use_container_width=True)
+                st.subheader("Jogos sugeridos:")
+                dez_colors = px.colors.qualitative.Pastel
+                for idx, jogo in enumerate(jogos):
+                    st.markdown(
+                        f"**Jogo {idx + 1}:** " + " ".join([f"<span style='color:#ff4b4b;'>{d}</span>" for d in jogo]),
+                        unsafe_allow_html=True)
+
+                st.subheader("Probabilidade final (rede neural):")
+                fig = px.bar(x=list(range(1, 26)), y=previsao_final, labels={"x": "Dezenas", "y": "Probabilidade"},
+                             color=previsao_final, color_continuous_scale="plasma")
+                fig.update_layout(xaxis=dict(dtick=1))
+                st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Histórico de concursos")
         st.dataframe(df, use_container_width=True)
