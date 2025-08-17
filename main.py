@@ -4,6 +4,8 @@ import numpy as np
 import plotly.express as px
 import json
 import hashlib
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
 
 
 # ========================
@@ -41,24 +43,28 @@ def converter_para_binario(historico):
     return np.array(historico_binario)
 
 
-def gerar_jogos(historico_binario, excluir_dezenas=[], qtd_jogos=1):
-    media = np.mean(historico_binario, axis=0)
-    for dez in excluir_dezenas:
-        if 1 <= dez <= 25:
-            media[dez - 1] = 0
+def treinar_rede_neural(historico_binario):
+    X = historico_binario[:-1]
+    y = historico_binario[1:]
 
-    dezenas_ordenadas = np.argsort(media)[-15:] + 1
-    jogos = []
-    while len(jogos) < qtd_jogos:
-        np.random.shuffle(dezenas_ordenadas)
-        jogo = tuple(sorted(dezenas_ordenadas[:15]))
-        if jogo not in jogos:
-            jogos.append(jogo)
-    return jogos, media
+    model = Sequential()
+    model.add(Dense(50, activation='relu', input_dim=25))
+    model.add(Dense(25, activation='sigmoid'))
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model.fit(X, y, epochs=100, verbose=0)
+    return model
+
+
+def prever_jogo(model, ultimo_concurso):
+    pred = model.predict(np.array([ultimo_concurso]))[0]
+    dezenas_prob = [(i + 1, pred[i]) for i in range(25)]
+    dezenas_prob.sort(key=lambda x: x[1], reverse=True)
+    jogo = [dez[0] for dez in dezenas_prob[:15]]
+    return sorted(jogo), pred
 
 
 # ========================
-# Configurações da página
+# Configuração da página
 # ========================
 st.set_page_config(
     page_title="Previsão Lotofácil",
@@ -68,7 +74,7 @@ st.set_page_config(
 )
 
 # ========================
-# Estado de login
+# Inicializar estado de login
 # ========================
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
@@ -79,33 +85,26 @@ usuarios = carregar_usuarios()
 # Login
 # ========================
 if not st.session_state["logado"]:
-    st.markdown("<h1 style='text-align: center; color:#ff4b4b;'>🔐 Acesso Restrito</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center;'>Digite seu usuário e senha para acessar o sistema.</p>",
-                unsafe_allow_html=True)
-
-    usuario = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
-    entrar = st.button("Entrar")
+    st.sidebar.title("🔐 Login")
+    usuario = st.sidebar.text_input("Usuário")
+    senha = st.sidebar.text_input("Senha", type="password")
+    entrar = st.sidebar.button("Entrar")
 
     if entrar:
         if verificar_login(usuario, senha, usuarios):
             st.session_state["logado"] = True
-            st.experimental_rerun()
+            st.sidebar.success(f"Bem-vindo, {usuario}!")
         else:
-            st.error("Usuário ou senha incorretos.")
-else:
-    # ========================
-    # Tela principal após login
-    # ========================
+            st.sidebar.error("Usuário ou senha incorretos.")
+
+# ========================
+# Página principal (rede neural)
+# ========================
+if st.session_state["logado"]:
     st.markdown("<h1 style='text-align: center; color:#ff4b4b;'>🎯 Previsão Lotofácil</h1>", unsafe_allow_html=True)
     st.markdown(
         "<p style='text-align: center; font-size:18px;'>Carregue seu histórico e veja as dezenas mais prováveis de sair!</p>",
         unsafe_allow_html=True)
-
-    # Botão de logout
-    if st.button("🔒 Sair"):
-        st.session_state["logado"] = False
-        st.experimental_rerun()
 
     arquivo = st.file_uploader("Escolha o arquivo Excel com histórico", type=["xls", "xlsx"])
 
@@ -125,38 +124,33 @@ else:
 
         st.success("✅ Arquivo carregado e convertido com sucesso!")
 
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            st.subheader("Escolha dezenas para excluir")
-            excluir_dezenas = st.multiselect(
-                "Selecione dezenas (opcional)",
-                options=list(range(1, 26))
+        if st.button("Gerar Previsão com Rede Neural"):
+            modelo = treinar_rede_neural(historico_binario)
+            ultimo = historico_binario[-1]
+            jogo_previsto, probabilidade = prever_jogo(modelo, ultimo)
+
+            st.subheader("🎯 Jogo Previsto pela Rede Neural:")
+            dez_colors = px.colors.qualitative.Pastel
+            st.markdown(
+                "".join([
+                            f"<span style='display:inline-block; margin:3px; padding:5px; background-color:{dez_colors[i % len(dez_colors)]}; border-radius:5px;'>{num}</span>"
+                            for i, num in enumerate(jogo_previsto)]),
+                unsafe_allow_html=True
             )
-            st.subheader("Quantidade de jogos")
-            qtd_jogos = st.number_input("Quantos jogos gerar?", min_value=1, max_value=10, value=1, step=1)
 
-        with col2:
-            if st.button("Gerar Previsões"):
-                jogos, media = gerar_jogos(historico_binario, excluir_dezenas, qtd_jogos)
-                st.subheader("Jogos sugeridos:")
-                dez_colors = px.colors.qualitative.Pastel
-                for idx, jogo in enumerate(jogos):
-                    cores = [dez_colors[i % len(dez_colors)] for i in range(15)]
-                    st.markdown(
-                        "".join([
-                                    f"<span style='display:inline-block; margin:3px; padding:5px; background-color:{cores[i]}; border-radius:5px;'>{num}</span>"
-                                    for i, num in enumerate(jogo)]),
-                        unsafe_allow_html=True
-                    )
+            # Gráfico de probabilidade
+            fig = px.bar(
+                x=list(range(1, 26)),
+                y=probabilidade,
+                labels={"x": "Dezenas", "y": "Probabilidade"},
+                title="Probabilidade de cada dezena",
+                color=probabilidade,
+                color_continuous_scale="plasma"
+            )
+            fig.update_layout(xaxis=dict(dtick=1))
+            st.plotly_chart(fig, use_container_width=True)
 
-                # Gráfico de probabilidade
-                fig = px.bar(
-                    x=list(range(1, 26)),
-                    y=media,
-                    labels={"x": "Dezenas", "y": "Probabilidade"},
-                    title="Probabilidade de cada dezena",
-                    color=media,
-                    color_continuous_scale="plasma"
-                )
-                fig.update_layout(xaxis=dict(dtick=1))
-                st.plotly_chart(fig, use_container_width=True)
+    # Botão de logout
+    if st.sidebar.button("Logout"):
+        st.session_state["logado"] = False
+        st.experimental_rerun = None
