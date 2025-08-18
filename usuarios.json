@@ -1,1 +1,23 @@
-{"admin": {"password": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"}}
+{
+    "admin": {
+        "password": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+    },
+    "ricardo": {
+        "password": "b562602c98d50421e4d0d168e4a7a1fa525fd656eaaabcd18a2b676257dc7573",
+        "codigo_indicacao": "MFC3CT",
+        "bonus": 0
+    },
+    "ricardo2": {
+        "password": "8a9bcf1e51e812d0af8465a8dbcc9f741064bf0af3b3d08e6b0246437c19f7fb",
+        "codigo_indicacao": null
+    },
+    "ricardosiqueira": {
+        "password": "b562602c98d50421e4d0d168e4a7a1fa525fd656eaaabcd18a2b676257dc7573"
+    },
+    "ricardo321": {
+        "password": "8d23cf6c86e834a7aa6eded54c26ce2bb2e74903538c61bdd5d2197997ab2f72"
+    },
+    "ricardo1234": {
+        "password": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"
+    }
+}

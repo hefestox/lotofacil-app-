@@ -2,10 +2,10 @@
   "admin": {
     "password": "123"
   },
-  "usuario1": {
-    "password": "senha123"
+  "ricardo": {
+    "password": "123"
   },
-  "usuario2": {
-    "password": "minhasenha"
+  "ricardo123": {
+    "password": "123"
   }
 }
