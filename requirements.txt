@@ -3,7 +3,8 @@ pandas
 numpy
 openpyxl
 plotly
+bcrypt
 tensorflow
-scikit-learn
+
 
 
