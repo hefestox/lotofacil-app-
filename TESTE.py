@@ -1,78 +1,168 @@
-import numpy as np
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from itertools import combinations
-import random
+import streamlit as st
 import pandas as pd
+import numpy as np
+import hashlib
+import sqlite3
+import plotly.express as px
 
-# ==========================
-# 1) CARREGAR HISTÓRICO DO EXCEL (ignora colunas não numéricas)
-# ==========================
-CAMINHO_EXCEL = r"C:\Users\LENOVO\Desktop\Lotofácil 08.xls.xlsx"
 
-def carregar_historico_do_excel(caminho):
-    df = pd.read_excel(caminho)  # Lê o Excel com cabeçalho
-    historico = []
-    for _, linha in df.iterrows():
-        # Pega apenas valores que sejam números inteiros válidos
-        linha_inteiros = []
-        for valor in linha:
-            if pd.notna(valor):
+# ========================
+# BANCO DE DADOS LOCAL
+# ========================
+def criar_tabelas():
+    conn = sqlite3.connect("usuarios.db")
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS usuarios (
+                    username TEXT PRIMARY KEY,
+                    password TEXT NOT NULL
+                )""")
+    conn.commit()
+    conn.close()
+
+
+def cadastrar_usuario(username, password):
+    conn = sqlite3.connect("usuarios.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO usuarios (username, password) VALUES (?, ?)", (username, password))
+    conn.commit()
+    conn.close()
+
+
+def verificar_usuario(username, password):
+    conn = sqlite3.connect("usuarios.db")
+    c = conn.cursor()
+    c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (username, password))
+    data = c.fetchone()
+    conn.close()
+    return data
+
+
+# ========================
+# SENHAS
+# ========================
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+# ========================
+# INTERFACE
+# ========================
+st.set_page_config(page_title="LotoFácil Revolution", layout="wide")
+st.title("💰 LotoFácil Revolution")
+
+# Sessão para armazenar previsões
+if "previsoes" not in st.session_state:
+    st.session_state["previsoes"] = None
+if "historico" not in st.session_state:
+    st.session_state["historico"] = None
+
+menu = ["Login", "Cadastro", "Sistema"]
+escolha = st.sidebar.selectbox("Menu", menu)
+
+# ========================
+# CADASTRO
+# ========================
+if escolha == "Cadastro":
+    st.subheader("📌 Cadastro de Usuário")
+    usuario = st.text_input("Usuário")
+    senha = st.text_input("Senha", type="password")
+    if st.button("Cadastrar"):
+        if usuario and senha:
+            criar_tabelas()
+            try:
+                cadastrar_usuario(usuario, hash_password(senha))
+                st.success("✅ Usuário cadastrado com sucesso!")
+            except:
+                st.error("⚠️ Usuário já existe!")
+        else:
+            st.warning("Preencha todos os campos.")
+
+# ========================
+# LOGIN
+# ========================
+elif escolha == "Login":
+    st.subheader("🔐 Login")
+    usuario = st.text_input("Usuário")
+    senha = st.text_input("Senha", type="password")
+    if st.button("Entrar"):
+        criar_tabelas()
+        user = verificar_usuario(usuario, hash_password(senha))
+        if user:
+            st.session_state["logado"] = True
+            st.success("✅ Login realizado com sucesso!")
+        else:
+            st.error("Usuário ou senha incorretos.")
+
+# ========================
+# SISTEMA PRINCIPAL
+# ========================
+elif escolha == "Sistema":
+    if "logado" not in st.session_state or not st.session_state["logado"]:
+        st.warning("⚠️ Faça login para acessar o sistema.")
+    else:
+        abas = st.tabs(["📂 Histórico", "🎯 Conferir Jogos", "🤖 Previsão", "📊 Análise"])
+
+        # ================= HISTÓRICO =================
+        with abas[0]:
+            st.subheader("📂 Upload do Histórico")
+            arquivo = st.file_uploader("Envie o arquivo Excel/CSV", type=["xlsx", "csv"])
+            if arquivo:
                 try:
-                    linha_inteiros.append(int(valor))
-                except ValueError:
-                    pass  # Ignora células que não sejam números
-        if linha_inteiros:  # Só adiciona se houver dezenas válidas
-            historico.append(linha_inteiros)
-    return historico
+                    if arquivo.name.endswith(".csv"):
+                        df = pd.read_csv(arquivo, header=None)
+                    else:
+                        df = pd.read_excel(arquivo, header=None)
 
-historico_dezenas = carregar_historico_do_excel(CAMINHO_EXCEL)
+                    # Ajuste para garantir 15 dezenas por jogo
+                    df = df.dropna(axis=1, how="all")
+                    df = df.iloc[:, :15]
+                    df.columns = [f"D{c + 1}" for c in range(df.shape[1])]
+                    st.session_state["historico"] = df
 
-# ==========================
-# 2) CONVERTER PARA BINÁRIO
-# ==========================
-def converter_para_binario(lista_de_resultados):
-    binario = []
-    for resultado in lista_de_resultados:
-        vetor = [0]*25
-        for dezena in resultado:
-            if 1 <= dezena <= 25:
-                vetor[dezena - 1] = 1
-        binario.append(vetor)
-    return np.array(binario)
+                    st.success(f"✅ {len(df)} concursos carregados com sucesso!")
+                    st.dataframe(df.tail(10))
+                except Exception as e:
+                    st.error(f"Erro ao ler arquivo: {e}")
 
-historico_binario = converter_para_binario(historico_dezenas)
+        # ================= CONFERIR JOGOS =================
+        with abas[1]:
+            st.subheader("🎯 Conferir Jogos")
+            if st.session_state["historico"] is not None:
+                numeros = st.text_area("Digite suas dezenas separadas por espaço:")
+                if st.button("Conferir"):
+                    try:
+                        dezenas = sorted([int(x) for x in numeros.split()])
+                        if len(dezenas) != 15:
+                            st.error("Você precisa digitar exatamente 15 dezenas.")
+                        else:
+                            df = st.session_state["historico"]
+                            resultados = []
+                            for idx, row in df.iterrows():
+                                acertos = len(set(dezenas) & set(row))
+                                resultados.append(acertos)
+                            st.write("✅ Conferência concluída!")
+                            st.bar_chart(pd.Series(resultados).value_counts().sort_index())
+                    except:
+                        st.error("Erro ao processar dezenas.")
+            else:
+                st.info("Envie primeiro o histórico.")
 
-# ==========================
-# 3) TREINAR REDE NEURAL
-# ==========================
-X = historico_binario[:-1]
-y = historico_binario[1:]
+        # ================= PREVISÃO =================
+        with abas[2]:
+            st.subheader("🤖 Gerar Previsão")
+            if st.button("Gerar Previsão"):
+                st.session_state["previsoes"] = sorted(np.random.choice(range(1, 26), 15, replace=False))
 
-model = Sequential()
-model.add(Dense(64, activation='relu', input_dim=25))
-model.add(Dense(25, activation='sigmoid'))
+            if st.session_state["previsoes"]:
+                st.success(f"Previsão Gerada: {st.session_state['previsoes']}")
 
-model.compile(optimizer='adam', loss='binary_crossentropy')
-model.fit(X, y, epochs=200, verbose=0)
-
-# ==========================
-# 4) FAZER PREVISÃO
-# ==========================
-ultimo_concurso = historico_binario[-1].reshape(1, -1)
-predicao = model.predict(ultimo_concurso)[0]
-
-indices_ordenados = np.argsort(predicao)
-dezenas_excluir = indices_ordenados[:4] + 1
-
-print(f"4 dezenas recomendadas para excluir pela rede neural: {sorted(dezenas_excluir)}")
-
-dezenas_restantes = [d for d in range(1, 26) if d not in dezenas_excluir]
-
-combinacoes = list(combinations(dezenas_restantes, 15))
-random.shuffle(combinacoes)
-jogos_sugeridos = combinacoes[:3]
-
-print("\n3 combinações sugeridas de 15 dezenas:")
-for i, jogo in enumerate(jogos_sugeridos, 1):
-    print(f"Jogo {i}: {sorted(jogo)}")
+        # ================= ANÁLISE =================
+        with abas[3]:
+            st.subheader("📊 Análise de Frequência")
+            if st.session_state["historico"] is not None:
+                df = st.session_state["historico"]
+                freq = pd.Series(df.values.ravel()).value_counts().sort_index()
+                fig = px.bar(freq, x=freq.index, y=freq.values, title="Frequência das Dezenas")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Envie primeiro o histórico.")

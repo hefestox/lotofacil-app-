@@ -1,7 +1,9 @@
 streamlit
 pandas
 numpy
-plotly
 openpyxl
+plotly
 tensorflow
+scikit-learn
+
 
