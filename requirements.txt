@@ -1,10 +1,9 @@
 streamlit
 pandas
 numpy
-openpyxl
 plotly
-bcrypt
-tensorflow
+openpyxl
+
 
 
 
