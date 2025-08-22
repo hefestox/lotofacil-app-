@@ -1,4 +1,4 @@
-# app_mao_amiga_pix.py
+# main.py
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -12,11 +12,6 @@ import bcrypt
 st.set_page_config(page_title="Mão Amiga • PIX", page_icon="🤝", layout="wide")
 
 APP_NAME = "Mão Amiga"
-PLANOS = {
-    "Bronze": {"mensalidade": 0},
-    "Prata":  {"mensalidade": 0},
-    "Ouro":   {"mensalidade": 0},
-}
 STAGE_AMOUNTS = {1: 50.0, 2: 100.0, 3: 300.0}
 STAGE_MAX = 3
 STAGE_TARGET_DONATIONS = 12
@@ -30,59 +25,51 @@ def get_conn():
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
-def column_exists(cur, table, col):
-    cur.execute(f"PRAGMA table_info({table})")
-    cols = [r[1] for r in cur.fetchall()]
-    return col in cols
-
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-
-    # Tabela de usuários
+    # Usuários
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        email TEXT UNIQUE,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'user',
-        plan TEXT NOT NULL DEFAULT 'Bronze',
-        stage INTEGER NOT NULL DEFAULT 1,
-        received_stage_donations INTEGER NOT NULL DEFAULT 0,
-        full_name TEXT,
-        pix_key TEXT,
-        referrer_id INTEGER
-    );
+        CREATE TABLE IF NOT EXISTS users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            stage INTEGER NOT NULL DEFAULT 1,
+            received_stage_donations INTEGER NOT NULL DEFAULT 0,
+            full_name TEXT,
+            pix_key TEXT,
+            referrer_id INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(referrer_id) REFERENCES users(id)
+        );
     """)
-
-    # Tabela de auditoria
+    # Auditoria
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS audit(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        action TEXT NOT NULL,
-        payload TEXT,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
-    );
+        CREATE TABLE IF NOT EXISTS audit(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action TEXT NOT NULL,
+            payload TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
     """)
-
-    # Tabela de doações
+    # Doações
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS donations(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        from_user_id INTEGER NOT NULL,
-        to_user_id INTEGER NOT NULL,
-        amount REAL NOT NULL,
-        stage INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(from_user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY(to_user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
+        CREATE TABLE IF NOT EXISTS donations(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_user_id INTEGER NOT NULL,
+            to_user_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            stage INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(from_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(to_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
     """)
-
     conn.commit()
 
 def db_execute(query, params=()):
@@ -114,6 +101,43 @@ def check_password(password: str, hashed: str) -> bool:
     except Exception:
         return False
 
+def log_action(user_id, action, payload=None):
+    db_execute(
+        "INSERT INTO audit(user_id, action, payload, created_at) VALUES (?,?,?,?)",
+        (user_id, action, json.dumps(payload) if payload else None, datetime.utcnow().isoformat())
+    )
+
+def get_user_by_username(username: str):
+    rows = db_query("""SELECT id, username, email, password_hash, role, stage,
+                               received_stage_donations, full_name, pix_key, referrer_id
+                        FROM users WHERE username = ?""", (username,))
+    return rows[0] if rows else None
+
+def get_user_by_id(uid: int):
+    rows = db_query("""SELECT id, username, email, password_hash, role, stage,
+                               received_stage_donations, full_name, pix_key, referrer_id
+                        FROM users WHERE id = ?""", (uid,))
+    return rows[0] if rows else None
+
+def authenticate(username: str, password: str):
+    user = get_user_by_username(username)
+    if not user:
+        return False, "Usuário não encontrado."
+    uid, uname, email, phash, role, stage, recv, full_name, pix_key, ref_id = user
+    if check_password(password, phash):
+        return True, {"id": uid, "username": uname, "email": email, "role": role,
+                      "stage": stage, "received_stage_donations": recv,
+                      "full_name": full_name, "pix_key": pix_key, "referrer_id": ref_id}
+    return False, "Senha inválida."
+
+def require_login():
+    if not st.session_state.get("user"):
+        st.warning("Faça login para continuar.")
+        st.stop()
+
+# =========================================
+# USUÁRIOS E DOAÇÕES
+# =========================================
 def create_user(username: str, email: str, password: str, full_name: str, pix_key: str, referrer_username: str|None):
     now = datetime.utcnow().isoformat()
     ph = hash_password(password)
@@ -123,69 +147,24 @@ def create_user(username: str, email: str, password: str, full_name: str, pix_ke
         row = db_query("SELECT id FROM users WHERE username = ?", (referrer_username,))
         if row:
             ref_id = row[0][0]
+    else:
+        # Atribui automaticamente primeiro admin existente
+        row = db_query("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1")
+        if row:
+            ref_id = row[0][0]
 
     try:
         cur = db_execute(
-            """INSERT INTO users (username, email, password_hash, role, plan,
-                                  full_name, pix_key, stage, received_stage_donations, referrer_id, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (username, email, ph, "user", "Bronze", full_name, pix_key, 1, 0, ref_id, now)
+            """INSERT INTO users (username, email, password_hash, role, stage,
+                                  received_stage_donations, full_name, pix_key, referrer_id, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (username, email, ph, "user", 1, 0, full_name, pix_key, ref_id, now)
         )
         uid = cur.lastrowid
         log_action(uid, "CREATE_USER", {"username": username, "referrer_id": ref_id})
         return True, "Usuário criado com sucesso."
     except sqlite3.IntegrityError as e:
         return False, f"Erro: usuário ou e-mail já existe. ({e})"
-
-def get_user_by_username(username: str):
-    rows = db_query("""SELECT id, username, email, password_hash, role, plan,
-                              full_name, pix_key, stage, received_stage_donations, referrer_id
-                       FROM users WHERE username = ?""", (username,))
-    return rows[0] if rows else None
-
-def get_user_by_id(uid: int):
-    rows = db_query("""SELECT id, username, email, password_hash, role, plan,
-                              full_name, pix_key, stage, received_stage_donations, referrer_id
-                       FROM users WHERE id = ?""", (uid,))
-    return rows[0] if rows else None
-
-def authenticate(username: str, password: str):
-    user = get_user_by_username(username)
-    if not user:
-        return False, "Usuário não encontrado."
-    uid, uname, email, phash, role, plan, full_name, pix_key, stage, recv, ref_id = user
-    if check_password(password, phash):
-        return True, {"id": uid, "username": uname, "email": email, "role": role, "plan": plan,
-                      "full_name": full_name, "pix_key": pix_key,
-                      "stage": stage, "received_stage_donations": recv, "referrer_id": ref_id}
-    return False, "Senha inválida."
-
-def require_login():
-    if not st.session_state.get("user"):
-        st.warning("Faça login para continuar.")
-        st.stop()
-
-# =========================================
-# UTILIDADES
-# =========================================
-def log_action(user_id, action, payload=None):
-    db_execute(
-        "INSERT INTO audit(user_id, action, payload, created_at) VALUES (?,?,?,?)",
-        (user_id, action, json.dumps(payload) if payload else None, datetime.utcnow().isoformat())
-    )
-
-def set_referrer(uid: int, referrer_username: str):
-    if not referrer_username:
-        return False, "Informe o usuário indicador."
-    ref = get_user_by_username(referrer_username)
-    if not ref:
-        return False, "Indicador não encontrado."
-    ref_id = ref[0]
-    if ref_id == uid:
-        return False, "Você não pode se indicar."
-    db_execute("UPDATE users SET referrer_id = ? WHERE id = ?", (ref_id, uid))
-    log_action(uid, "SET_REFERRER", {"referrer_id": ref_id})
-    return True, "Indicador atualizado."
 
 def update_pix(uid: int, new_pix: str):
     db_execute("UPDATE users SET pix_key = ? WHERE id = ?", (new_pix, uid))
@@ -196,31 +175,31 @@ def get_stage_amount(stage: int) -> float:
     return STAGE_AMOUNTS.get(stage, STAGE_AMOUNTS[1])
 
 def get_donation_target(uid: int):
-    row = db_query("""SELECT u2.id, u2.username, u2.full_name, u2.pix_key
-                      FROM users u1
-                      JOIN users u2 ON u1.referrer_id = u2.id
-                      WHERE u1.id = ?""", (uid,))
+    row = db_query("""SELECT u2.id, u2.full_name, u2.pix_key
+                       FROM users u1
+                       JOIN users u2 ON u1.referrer_id = u2.id
+                       WHERE u1.id = ?""", (uid,))
     return row[0] if row else None
 
 def record_donation(from_uid: int):
     tgt = get_donation_target(from_uid)
     if not tgt:
-        return False, "Você ainda não tem um indicador cadastrado. Defina seu indicador para saber para quem doar."
-    to_uid, to_user, to_full, to_pix = tgt
+        return False, "Você ainda não tem um indicador definido."
+    to_uid, to_full, to_pix = tgt
 
     u = get_user_by_id(from_uid)
-    stage = u[7]  # stage
+    stage = u[5]
     amount = get_stage_amount(stage)
-
     now = datetime.utcnow().isoformat()
+
     db_execute("""INSERT INTO donations(from_user_id, to_user_id, amount, stage, status, created_at)
                   VALUES (?,?,?,?, 'confirmed', ?)""",
                (from_uid, to_uid, amount, stage, now))
     log_action(from_uid, "DONATION_SENT", {"to": to_uid, "amount": amount, "stage": stage})
 
     recv_user = get_user_by_id(to_uid)
-    recv_stage = recv_user[7]
-    recv_count = recv_user[8] + 1
+    recv_stage = recv_user[5]
+    recv_count = recv_user[6] + 1
 
     if recv_count >= STAGE_TARGET_DONATIONS and recv_stage < STAGE_MAX:
         db_execute("""UPDATE users
@@ -229,25 +208,23 @@ def record_donation(from_uid: int):
                       WHERE id = ?""", (to_uid,))
         log_action(to_uid, "STAGE_UP", {"from_stage": recv_stage, "to_stage": recv_stage + 1})
     else:
-        db_execute("""UPDATE users
-                      SET received_stage_donations = ?
-                      WHERE id = ?""", (recv_count, to_uid))
+        db_execute("UPDATE users SET received_stage_donations = ? WHERE id = ?", (recv_count, to_uid))
 
     return True, f"Doação registrada e confirmada para {to_full} (R$ {amount:.2f})."
 
 def listar_doacoes(uid: int):
     sent = db_query("""SELECT d.id, u.username AS para, d.amount, d.stage, d.status, d.created_at
-                       FROM donations d
-                       JOIN users u ON d.to_user_id = u.id
-                       WHERE d.from_user_id = ? ORDER BY d.id DESC""", (uid,), as_df=True)
+                        FROM donations d
+                        JOIN users u ON d.to_user_id = u.id
+                        WHERE d.from_user_id = ? ORDER BY d.id DESC""", (uid,), as_df=True)
     received = db_query("""SELECT d.id, u.username AS de, d.amount, d.stage, d.status, d.created_at
-                           FROM donations d
-                           JOIN users u ON d.from_user_id = u.id
-                           WHERE d.to_user_id = ? ORDER BY d.id DESC""", (uid,), as_df=True)
+                            FROM donations d
+                            JOIN users u ON d.from_user_id = u.id
+                            WHERE d.to_user_id = ? ORDER BY d.id DESC""", (uid,), as_df=True)
     return sent, received
 
 # =========================================
-# UI LOGIN / REGISTRO
+# UI
 # =========================================
 def ui_login():
     if "user" not in st.session_state:
@@ -278,23 +255,26 @@ def ui_login():
         else:
             st.error(msg)
 
-# =========================================
-# PÁGINAS PRINCIPAIS
-# =========================================
 def page_dashboard():
     require_login()
     user = st.session_state["user"]
     st.title("🏠 Dashboard")
     st.write(f"Olá **{user['full_name']}**! Stage atual: **{user['stage']}**")
     st.write(f"Chave PIX cadastrada: **{user['pix_key']}**")
-    st.write("Use a aba 'Doações' para registrar suas doações via PIX.")
+    st.write("Use a aba 'Doações / Rede' para registrar suas doações via PIX.")
 
 def page_rede_doacoes():
     require_login()
     user = st.session_state["user"]
     st.title("🤝 Rede / Doações")
     st.write(f"Stage atual: **{user['stage']}**")
-    st.write(f"Seu indicador: {get_donation_target(user['id'])}")
+
+    target = get_donation_target(user["id"])
+    if target:
+        to_uid, to_full, to_pix = target
+        st.write(f"Você deve doar para: **{to_full}** | PIX: **{to_pix}**")
+    else:
+        st.write("Ainda não há indicador definido para você.")
 
     new_pix = st.text_input("Atualizar chave PIX", value=user["pix_key"])
     if st.button("Atualizar PIX"):
@@ -324,7 +304,7 @@ def page_admin():
         st.stop()
 
     st.title("⚙️ Painel Admin")
-    df = db_query("SELECT id, username, full_name, email, plan, stage, pix_key FROM users", as_df=True)
+    df = db_query("SELECT id, username, full_name, email, stage, received_stage_donations, pix_key, referrer_id FROM users", as_df=True)
     st.dataframe(df)
 
 # =========================================
