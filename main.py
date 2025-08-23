@@ -234,7 +234,7 @@ def listar_doacoes(uid: int):
 
 
 # ===============================
-# UI: Sidebar (login ou logged)
+# UI: Sidebar (login ou logout)
 # ===============================
 def ui_sidebar_login():
     if "user" not in st.session_state:
@@ -248,8 +248,7 @@ def ui_sidebar_login():
         st.sidebar.caption(f"Stage: {u['stage']}")
         if st.sidebar.button("Sair", key="logout_btn"):
             st.session_state["user"] = None
-            st.success("Logout realizado!")
-            st.stop()  # substitui experimental_rerun
+            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.stop()
         st.sidebar.divider()
         st.sidebar.markdown("Menu principal abaixo.")
         return
@@ -262,7 +261,7 @@ def ui_sidebar_login():
         if ok:
             st.session_state["user"] = res
             st.success(f"Bem-vindo, {res['full_name'] or res['username']}!")
-            st.stop()  # substitui experimental_rerun
+            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.stop()
         else:
             st.error(res)
 
@@ -286,7 +285,6 @@ def page_home():
 
 def page_register():
     st.header("📝 Registrar novo usuário")
-    st.write("Preencha os dados para entrar na rede.")
     col1, col2 = st.columns([2, 1])
     with col1:
         reg_user = st.text_input("Usuário (único)", key="reg_user_page")
@@ -309,29 +307,37 @@ def page_register():
                     st.error(msg)
 
 
-# ===============================
-# Página Dashboard
-# ===============================
 def page_dashboard():
     require_login()
     user = st.session_state["user"]
     st.header(f"🏠 Dashboard — {user['full_name'] or user['username']}")
+    # Mostra métricas
     c1, c2, c3 = st.columns(3)
     c1.metric("Stage atual", user["stage"])
     c2.metric("Recebidas (atual)", user["received_stage_donations"])
     c3.metric("PIX", user["pix_key"] or "—")
     st.markdown("---")
-    st.info("Acesse 'Rede / Doações' para ver quem receberá sua doação e registrar suas ações.")
+
+    # Quadro investimento/retorno
+    st.subheader("💰 Investimento e retorno esperado")
+    stages_data = []
+    for s in range(1, STAGE_MAX + 1):
+        amount = STAGE_AMOUNTS[s]
+        invest = amount * STAGE_TARGET_DONATIONS
+        stages_data.append({"Stage": s, "Doação por Stage (R$)": amount,
+                            "Doações enviadas": STAGE_TARGET_DONATIONS,
+                            "Investimento total (R$)": invest,
+                            "Recebimento esperado (R$)": invest})
+    df_stage = pd.DataFrame(stages_data)
+    st.table(df_stage)
 
 
-# ===============================
-# Página Rede / Doações (com binário visual)
-# ===============================
 def page_rede_doacoes():
     require_login()
     user = st.session_state["user"]
-    st.header("🤝 Rede / Doações")
-    st.write(f"**Stage:** {user['stage']}")
+    st.header("🤝 Rede / Doações (Rede Binária)")
+
+    # Beneficiário
     tgt = get_donation_target(user["id"])
     if tgt:
         to_id, to_username, to_full, to_pix = tgt
@@ -365,26 +371,22 @@ def page_rede_doacoes():
                 else:
                     st.error(msg)
     else:
-        st.warning("Você não possui indicador (referrer) definido. Informe ao seu indicador para que ele apareça aqui.")
+        st.warning("Você não possui indicador (referrer) definido.")
 
     st.markdown("---")
-    st.subheader("📤 Doações enviadas")
     sent, received = listar_doacoes(user["id"])
-    if not sent.empty:
-        st.dataframe(sent.style.format({"amount": "R$ {:.2f}"}), use_container_width=True)
-    else:
-        st.write("Nenhuma doação enviada.")
+    with st.expander("📤 Doações enviadas"):
+        if not sent.empty:
+            st.dataframe(sent.style.format({"amount": "R$ {:.2f}"}), use_container_width=True)
+        else:
+            st.write("Nenhuma doação enviada.")
+    with st.expander("📥 Doações recebidas"):
+        if not received.empty:
+            st.dataframe(received.style.format({"amount": "R$ {:.2f}"}), use_container_width=True)
+        else:
+            st.write("Nenhuma doação recebida.")
 
-    st.subheader("📥 Doações recebidas")
-    if not received.empty:
-        st.dataframe(received.style.format({"amount": "R$ {:.2f}"}), use_container_width=True)
-    else:
-        st.write("Nenhuma doação recebida.")
 
-
-# ===============================
-# Página Admin
-# ===============================
 def page_admin():
     require_login()
     user = st.session_state["user"]
@@ -396,28 +398,12 @@ def page_admin():
         "SELECT id, username, full_name, email, plan, stage, received_stage_donations, pix_key, referrer_id, created_at FROM users",
         as_df=True)
     st.dataframe(df, use_container_width=True)
-
-    st.subheader("⚠️ Ações de admin")
-    col1, col2 = st.columns(2)
-    with col1:
-        del_user = st.text_input("Digite o username para excluir", key="del_user_input")
-        if st.button("Excluir usuário", key="btn_del_user"):
-            row = get_user_by_username(del_user)
-            if row:
-                db_execute("DELETE FROM users WHERE username = ?", (del_user,))
-                st.success(f"Usuário {del_user} excluído.")
-            else:
-                st.error("Usuário não encontrado.")
-    with col2:
-        upd_pix_user = st.text_input("Username para atualizar PIX", key="upd_pix_user")
-        new_pix = st.text_input("Nova chave PIX", key="upd_pix_value")
-        if st.button("Atualizar PIX", key="btn_upd_pix"):
-            row = get_user_by_username(upd_pix_user)
-            if row:
-                db_execute("UPDATE users SET pix_key=? WHERE username=?", (new_pix, upd_pix_user))
-                st.success(f"PIX atualizado para {upd_pix_user}.")
-            else:
-                st.error("Usuário não encontrado.")
+    st.markdown("---")
+    st.subheader("Excluir usuário")
+    uid_del = st.number_input("ID do usuário a excluir", min_value=1, step=1)
+    if st.button("Excluir usuário"):
+        db_execute("DELETE FROM users WHERE id = ?", (uid_del,))
+        st.success(f"Usuário {uid_del} excluído.")
 
 
 # ===============================
