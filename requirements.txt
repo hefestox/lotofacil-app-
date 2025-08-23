@@ -1,10 +1,11 @@
 streamlit
 pandas
 numpy
-bcrypt
 plotly
-openpyxl
-tensorflow
+sqlite3-binary
+bcrypt
+
+
 
 
 
