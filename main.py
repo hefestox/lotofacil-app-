@@ -44,7 +44,7 @@ def init_db():
             pix_key TEXT,
             stage INTEGER NOT NULL DEFAULT 1,
             received_stage_donations INTEGER NOT NULL DEFAULT 0,
-            referrer_id INTEGER,
+            referrer_id TEXT,
             created_at TEXT NOT NULL
         );
     """)
@@ -108,7 +108,7 @@ def log_action(user_id, action, payload=None):
         (user_id, action, json.dumps(payload) if payload else None, datetime.utcnow().isoformat())
     )
 
-def create_user(username: str, email: str, password: str, full_name: str, pix_key: str, referrer_id: int|None):
+def create_user(username: str, email: str, password: str, full_name: str, pix_key: str, referrer_username: str|None):
     now = datetime.utcnow().isoformat()
     ph = hash_password(password)
     try:
@@ -116,10 +116,10 @@ def create_user(username: str, email: str, password: str, full_name: str, pix_ke
             """INSERT INTO users (username, email, password_hash, role, plan, full_name, pix_key,
                                   stage, received_stage_donations, referrer_id, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (username, email, ph, "user", "Bronze", full_name, pix_key, 1, 0, referrer_id, now)
+            (username, email, ph, "user", "Bronze", full_name, pix_key, 1, 0, referrer_username, now)
         )
         uid = cur.lastrowid
-        log_action(uid, "CREATE_USER", {"username": username, "referrer_id": referrer_id})
+        log_action(uid, "CREATE_USER", {"username": username, "referrer_id": referrer_username})
         return True, "Usuário criado com sucesso."
     except sqlite3.IntegrityError as e:
         return False, f"Erro: usuário ou e-mail já existe. ({e})"
@@ -164,7 +164,7 @@ def get_donation_target(uid: int):
     row = db_query("""
         SELECT u2.id, u2.username, u2.full_name, u2.pix_key
         FROM users u1
-        JOIN users u2 ON u1.referrer_id = u2.id
+        JOIN users u2 ON u1.referrer_id = u2.username
         WHERE u1.id = ?""", (uid,))
     return row[0] if row else None
 
@@ -174,7 +174,7 @@ def record_donation(from_uid: int):
         return False, "Você ainda não tem um indicador cadastrado."
     to_uid, to_username, to_full, to_pix = tgt
     u = get_user_by_id(from_uid)
-    stage = u[8]  # stage index
+    stage = u[8]
     amount = get_stage_amount(stage)
     now = datetime.utcnow().isoformat()
     try:
@@ -210,7 +210,7 @@ def listar_doacoes(uid: int):
     return sent, received
 
 # ===============================
-# UI: Sidebar
+# UI: Sidebar (login ou registrado)
 # ===============================
 def ui_sidebar_login():
     if "user" not in st.session_state:
@@ -222,9 +222,9 @@ def ui_sidebar_login():
         u = st.session_state["user"]
         st.sidebar.markdown(f"**{u['full_name'] or u['username']}**")
         st.sidebar.caption(f"Stage: {u['stage']}")
-        if st.sidebar.button("Sair"):
+        if st.sidebar.button("Sair", key="logout_btn"):
             st.session_state["user"] = None
-            st.experimental_rerun = lambda: st.experimental_rerun()  # fallback
+            st.experimental_rerun()  # em versões novas use st.session_state["rerun"] = True
         st.sidebar.divider()
         st.sidebar.markdown("Menu principal abaixo.")
         return
@@ -232,12 +232,12 @@ def ui_sidebar_login():
     st.sidebar.subheader("🔐 Login")
     login_user = st.sidebar.text_input("Usuário", key="login_u")
     login_pass = st.sidebar.text_input("Senha", type="password", key="login_p")
-    if st.sidebar.button("Entrar"):
+    if st.sidebar.button("Entrar", key="login_btn"):
         ok, res = authenticate(login_user, login_pass)
         if ok:
             st.session_state["user"] = res
             st.success(f"Bem-vindo, {res['full_name'] or res['username']}!")
-            st.experimental_rerun = lambda: st.experimental_rerun()  # fallback
+            st.experimental_rerun()
         else:
             st.error(res)
 
@@ -260,6 +260,7 @@ def page_home():
 def page_register():
     st.header("📝 Registrar novo usuário")
     st.write("Preencha os dados para entrar na rede.")
+    query_ref = st.query_params.get("ref", [None])[0]
     col1, col2 = st.columns([2,1])
     with col1:
         reg_user = st.text_input("Usuário (único)", key="reg_user_page")
@@ -268,101 +269,20 @@ def page_register():
         reg_pix = st.text_input("Chave PIX (opcional)", key="reg_pix_page")
     with col2:
         reg_pass = st.text_input("Senha", type="password", key="reg_pass_page")
-        query_params = st.experimental_get_query_params()
-        ref_id = int(query_params.get("ref")[0]) if "ref" in query_params else None
-        st.write("Seu indicador será definido automaticamente se você entrou pelo link de indicação.")
-        if st.button("Registrar"):
+        reg_ref = st.text_input("Indicador (username) - opcional", value=query_ref or "", key="reg_ref_page")
+        st.write("")
+        if st.button("Registrar", key="reg_submit_page"):
             if not reg_user or not reg_pass or not reg_full:
                 st.error("Preencha usuário, nome completo e senha.")
             else:
-                ok, msg = create_user(reg_user, reg_email or None, reg_pass, reg_full, reg_pix or None, ref_id)
+                ok, msg = create_user(reg_user, reg_email or None, reg_pass, reg_full, reg_pix or None, reg_ref or None)
                 if ok:
                     st.success(msg)
                     st.info("Agora faça login pela barra lateral.")
                 else:
                     st.error(msg)
 
-def page_dashboard():
-    require_login()
-    user = st.session_state["user"]
-    st.header(f"🏠 Dashboard — {user['full_name'] or user['username']}")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Stage atual", user["stage"])
-    c2.metric("Recebidas (atual)", user["received_stage_donations"])
-    c3.metric("PIX", user["pix_key"] or "—")
-    st.markdown("---")
-    st.info("Acesse 'Rede / Doações' para ver quem receberá sua doação e registrar suas ações.")
-
-def page_rede_doacoes():
-    require_login()
-    user = st.session_state["user"]
-    st.header("🤝 Rede / Doações")
-    st.write(f"**Stage:** {user['stage']}")
-    tgt = get_donation_target(user["id"])
-    if tgt:
-        to_id, to_username, to_full, to_pix = tgt
-        left, right = st.columns([3,2])
-        with left:
-            st.subheader("Beneficiário (seu indicador)")
-            st.markdown(f"**Nome:** {to_full}")
-            st.markdown(f"**Usuário:** {to_username}")
-            st.markdown(f"**PIX:** {to_pix or '—'}")
-            st.markdown(f"**Valor a doar:** R$ {get_stage_amount(user['stage']):.2f}")
-        with right:
-            st.subheader("Ações")
-            new_pix = st.text_input("Atualizar sua PIX", value=user["pix_key"] or "", key=f"pix_input_{user['id']}")
-            if st.button("Salvar PIX", key=f"btn_save_pix_{user['id']}"):
-                ok, msg = update_pix(user["id"], new_pix)
-                if ok:
-                    st.success(msg)
-                    st.session_state["user"]["pix_key"] = new_pix
-                else:
-                    st.error(msg)
-            if st.button("Registrar Doação", key=f"btn_donate_{user['id']}"):
-                ok, msg = record_donation(user["id"])
-                if ok:
-                    st.success(msg)
-                    refreshed = get_user_by_id(user["id"])
-                    if refreshed:
-                        st.session_state["user"]["pix_key"] = refreshed[7]
-                        st.session_state["user"]["stage"] = refreshed[8]
-                        st.session_state["user"]["received_stage_donations"] = refreshed[9]
-                else:
-                    st.error(msg)
-    else:
-        st.warning("Você não possui indicador (referrer) definido. Use um link de indicação.")
-
-    st.markdown("---")
-    sent, received = listar_doacoes(user["id"])
-    with st.expander("📤 Doações enviadas"):
-        if not sent.empty:
-            st.dataframe(sent.style.format({"amount": "R$ {:.2f}"}), use_container_width=True)
-        else:
-            st.write("Nenhuma doação enviada.")
-    with st.expander("📥 Doações recebidas"):
-        if not received.empty:
-            st.dataframe(received.style.format({"amount": "R$ {:.2f}"}), use_container_width=True)
-        else:
-            st.write("Nenhuma doação recebida.")
-
-def page_admin():
-    require_login()
-    user = st.session_state["user"]
-    if user["role"] != "admin":
-        st.warning("Área restrita a administradores.")
-        st.stop()
-    st.header("⚙️ Painel Admin")
-    df = db_query("SELECT id, username, full_name, email, plan, stage, received_stage_donations, pix_key, referrer_id, created_at FROM users", as_df=True)
-    st.dataframe(df, use_container_width=True)
-
-    st.subheader("Excluir usuário")
-    del_user_id = st.number_input("ID do usuário para excluir", min_value=1, step=1)
-    if st.button("Excluir"):
-        try:
-            db_execute("DELETE FROM users WHERE id = ?", (del_user_id,))
-            st.success("Usuário excluído com sucesso.")
-        except Exception as e:
-            st.error(f"Erro ao excluir usuário: {e}")
+# Página dashboard, rede, admin etc. aqui...
 
 # ===============================
 # ROTEAMENTO
@@ -370,14 +290,14 @@ def page_admin():
 PAGES = {
     "Início": page_home,
     "Registrar": page_register,
-    "Dashboard": page_dashboard,
-    "Rede / Doações": page_rede_doacoes,
-    "Admin": page_admin
+    # "Dashboard": page_dashboard,
+    # "Rede / Doações": page_rede_doacoes,
+    # "Admin": page_admin
 }
 
 # ===============================
 # RODA A U.I.
 # ===============================
 ui_sidebar_login()
-choice = st.sidebar.selectbox("Menu", list(PAGES.keys()), index=0)
+choice = st.sidebar.selectbox("Menu", list(PAGES.keys()), index=0, key="menu_select")
 PAGES[choice]()
