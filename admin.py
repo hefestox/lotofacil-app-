@@ -1,110 +1,43 @@
-# admin_streamlit_advanced.py
-import streamlit as st
-import pandas as pd
-import sqlite3
+# ===============================
+# PÁGINA ADMIN COMPLETA
+# ===============================
+def page_admin():
+    require_login()
+    user = st.session_state["user"]
+    if user["role"] != "admin":
+        st.warning("Área restrita a administradores.")
+        st.stop()
 
-# ===============================
-# CONFIGURAÇÕES
-# ===============================
-st.set_page_config(page_title="Admin • Mão Amiga", page_icon="🛠️", layout="wide")
+    st.header("⚙️ Painel Admin • Gerenciamento de Usuários")
+    st.markdown("Aqui você pode gerenciar usuários, atualizar PIX, planos e visualizar indicadores.")
 
-DB_FILE = "app.db"
+    # Tabela de usuários
+    df = db_query("""
+        SELECT id, username, full_name, email, plan, stage, received_stage_donations, pix_key, referrer_id, created_at
+        FROM users ORDER BY id
+    """, as_df=True)
 
-# ===============================
-# FUNÇÕES DB
-# ===============================
-@st.cache_resource
-def get_conn():
-    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
+    st.subheader("Usuários Cadastrados")
+    for idx, row in df.iterrows():
+        st.markdown(f"**{row['full_name']} ({row['username']})**")
+        st.write(f"- Email: {row['email'] or '—'}")
+        st.write(
+            f"- Stage: {row['stage']} | Doações recebidas: {row['received_stage_donations']} | Plano: {row['plan']}")
+        st.write(
+            f"- PIX: {row['pix_key'] or '—'} | Indicação (referrer): {row['referrer_id'] or '—'} | Criado em: {row['created_at']}")
 
-def db_execute(query, params=()):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(query, params)
-    conn.commit()
-    return cur
-
-def db_query(query, params=(), as_df=False):
-    conn = get_conn()
-    if as_df:
-        return pd.read_sql_query(query, conn, params=params)
-    cur = conn.cursor()
-    cur.execute(query, params)
-    return cur.fetchall()
-
-# ===============================
-# FUNÇÕES ADMIN
-# ===============================
-def list_users(filter_text=""):
-    df = db_query(
-        "SELECT id, username, full_name, email, role, plan, pix_key FROM users",
-        as_df=True
-    )
-    if filter_text:
-        df = df[df.apply(lambda row: row.astype(str).str.contains(filter_text, case=False).any(), axis=1)]
-    return df
-
-def delete_user(user_id):
-    db_execute("DELETE FROM users WHERE id = ?", (user_id,))
-    st.success(f"Usuário {user_id} excluído com sucesso!")
-
-def update_pix(user_id, new_pix):
-    db_execute("UPDATE users SET pix_key = ? WHERE id = ?", (new_pix, user_id))
-    st.success(f"PIX do usuário {user_id} atualizado para: {new_pix}")
-
-def update_plan(user_id, new_plan):
-    db_execute("UPDATE users SET plan = ? WHERE id = ?", (new_plan, user_id))
-    st.success(f"Plano do usuário {user_id} atualizado para: {new_plan}")
-
-# ===============================
-# INTERFACE
-# ===============================
-st.title("🛠️ Painel Admin • Mão Amiga")
-
-tabs = st.tabs(["Usuários", "Excluir Usuário", "Atualizar PIX", "Atualizar Plano"])
-
-# ===============================
-# ABA 1: Usuários
-# ===============================
-with tabs[0]:
-    st.subheader("📋 Lista de Usuários")
-    filter_text = st.text_input("Filtrar por nome, email ou plano")
-    users_df = list_users(filter_text)
-    st.dataframe(users_df, use_container_width=True)
-
-# ===============================
-# ABA 2: Excluir Usuário
-# ===============================
-with tabs[1]:
-    st.subheader("❌ Excluir Usuário")
-    del_id = st.number_input("ID do usuário", min_value=1, step=1)
-    if st.button("Excluir Usuário"):
-        if st.confirm(f"Tem certeza que deseja excluir o usuário {del_id}?"):
-            delete_user(del_id)
-            st.experimental_rerun()
-
-# ===============================
-# ABA 3: Atualizar PIX
-# ===============================
-with tabs[2]:
-    st.subheader("💳 Atualizar PIX")
-    pix_id = st.number_input("ID do usuário", min_value=1, step=1, key="pix_id")
-    new_pix = st.text_input("Nova chave PIX")
-    if st.button("Atualizar PIX"):
-        if st.confirm(f"Confirmar atualização do PIX do usuário {pix_id}?"):
-            update_pix(pix_id, new_pix)
-            st.experimental_rerun()
-
-# ===============================
-# ABA 4: Atualizar Plano
-# ===============================
-with tabs[3]:
-    st.subheader("🔄 Atualizar Plano")
-    plan_id = st.number_input("ID do usuário", min_value=1, step=1, key="plan_id")
-    new_plan = st.selectbox("Novo plano", ["Bronze", "Prata", "Ouro", "Diamante"])
-    if st.button("Atualizar Plano"):
-        if st.confirm(f"Confirmar atualização do plano do usuário {plan_id}?"):
-            update_plan(plan_id, new_plan)
-            st.experimental_rerun()
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            if st.button(f"Excluir {row['username']}", key=f"del_{row['id']}"):
+                db_execute("DELETE FROM users WHERE id = ?", (row['id'],))
+                log_action(user['id'], "DELETE_USER", {"deleted_user": row['username']})
+                st.success(f"Usuário {row['username']} excluído com sucesso!")
+                st.experimental_rerun()
+        with col2:
+            new_pix = st.text_input(f"PIX {row['username']}", value=row['pix_key'] or "", key=f"pix_{row['id']}")
+            if st.button(f"Atualizar PIX {row['username']}", key=f"btn_pix_{row['id']}"):
+                db_execute("UPDATE users SET pix_key = ? WHERE id = ?", (new_pix, row['id']))
+                log_action(user['id'], "UPDATE_PIX", {"user": row['username'], "new_pix": new_pix})
+                st.success(f"PIX de {row['username']} atualizado!")
+                st.experimental_rerun()
+        with col3:
