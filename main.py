@@ -13,6 +13,7 @@ import bcrypt
 st.set_page_config(page_title="Mão Amiga • PIX", page_icon="🤝", layout="wide")
 APP_NAME = "Mão Amiga"
 
+# Logo local esperado: ./assets/logo.png
 LOCAL_LOGO_REL = os.path.join("assets", "logo.png")
 
 STAGE_AMOUNTS = {1: 50.0, 2: 100.0, 3: 300.0}
@@ -107,23 +108,18 @@ def log_action(user_id, action, payload=None):
         (user_id, action, json.dumps(payload) if payload else None, datetime.utcnow().isoformat())
     )
 
-def create_user(username: str, email: str, password: str, full_name: str, pix_key: str, referrer_username: str|None):
+def create_user(username: str, email: str, password: str, full_name: str, pix_key: str, referrer_id: int|None):
     now = datetime.utcnow().isoformat()
     ph = hash_password(password)
-    ref_id = None
-    if referrer_username:
-        row = db_query("SELECT id FROM users WHERE username = ?", (referrer_username,))
-        if row:
-            ref_id = row[0][0]
     try:
         cur = db_execute(
             """INSERT INTO users (username, email, password_hash, role, plan, full_name, pix_key,
                                   stage, received_stage_donations, referrer_id, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (username, email, ph, "user", "Bronze", full_name, pix_key, 1, 0, ref_id, now)
+            (username, email, ph, "user", "Bronze", full_name, pix_key, 1, 0, referrer_id, now)
         )
         uid = cur.lastrowid
-        log_action(uid, "CREATE_USER", {"username": username, "referrer_id": ref_id})
+        log_action(uid, "CREATE_USER", {"username": username, "referrer_id": referrer_id})
         return True, "Usuário criado com sucesso."
     except sqlite3.IntegrityError as e:
         return False, f"Erro: usuário ou e-mail já existe. ({e})"
@@ -176,33 +172,18 @@ def record_donation(from_uid: int):
     tgt = get_donation_target(from_uid)
     if not tgt:
         return False, "Você ainda não tem um indicador cadastrado."
-
-    user = get_user_by_id(from_uid)
-    stage = user[8]  # stage atual
-
-    # Checar quantas doações já enviou nesse stage
-    sent_count = db_query("""
-        SELECT COUNT(*) FROM donations
-        WHERE from_user_id = ? AND stage = ?
-    """, (from_uid, stage))[0][0]
-
-    if sent_count >= STAGE_TARGET_DONATIONS:
-        return False, f"Você já enviou todas as {STAGE_TARGET_DONATIONS} doações desse stage."
-
     to_uid, to_username, to_full, to_pix = tgt
+    u = get_user_by_id(from_uid)
+    stage = u[8]  # stage index
     amount = get_stage_amount(stage)
     now = datetime.utcnow().isoformat()
     try:
-        db_execute("""
-            INSERT INTO donations(from_user_id, to_user_id, amount, stage, status, created_at)
-            VALUES (?,?,?,?, 'confirmed', ?)""",
+        db_execute("""INSERT INTO donations(from_user_id, to_user_id, amount, stage, status, created_at)
+                      VALUES (?,?,?,?, 'confirmed', ?)""",
                    (from_uid, to_uid, amount, stage, now))
     except Exception as e:
         return False, f"Erro ao registrar doação: {e}"
-
     log_action(from_uid, "DONATION_SENT", {"to": to_uid, "amount": amount, "stage": stage})
-
-    # Atualizar recebidas do beneficiário
     recv_user = get_user_by_id(to_uid)
     recv_stage = recv_user[8]
     recv_count = recv_user[9] + 1
@@ -211,7 +192,6 @@ def record_donation(from_uid: int):
         log_action(to_uid, "STAGE_UP", {"from_stage": recv_stage, "to_stage": recv_stage + 1})
     else:
         db_execute("UPDATE users SET received_stage_donations = ? WHERE id = ?", (recv_count, to_uid))
-
     return True, f"Doação registrada e confirmada para {to_full} (R$ {amount:.2f})."
 
 def listar_doacoes(uid: int):
@@ -230,13 +210,11 @@ def listar_doacoes(uid: int):
     return sent, received
 
 # ===============================
-# UI: Sidebar (login)
+# UI: Sidebar
 # ===============================
 def ui_sidebar_login():
     if "user" not in st.session_state:
         st.session_state["user"] = None
-    if "rerun" not in st.session_state:
-        st.session_state["rerun"] = False
 
     st.sidebar.title(f"🤝 {APP_NAME}")
 
@@ -244,10 +222,9 @@ def ui_sidebar_login():
         u = st.session_state["user"]
         st.sidebar.markdown(f"**{u['full_name'] or u['username']}**")
         st.sidebar.caption(f"Stage: {u['stage']}")
-        if st.sidebar.button("Sair", key="logout_btn"):
+        if st.sidebar.button("Sair"):
             st.session_state["user"] = None
-            st.session_state["rerun"] = True
-            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.stop()
+            st.experimental_rerun = lambda: st.experimental_rerun()  # fallback
         st.sidebar.divider()
         st.sidebar.markdown("Menu principal abaixo.")
         return
@@ -255,13 +232,12 @@ def ui_sidebar_login():
     st.sidebar.subheader("🔐 Login")
     login_user = st.sidebar.text_input("Usuário", key="login_u")
     login_pass = st.sidebar.text_input("Senha", type="password", key="login_p")
-    if st.sidebar.button("Entrar", key="login_btn"):
+    if st.sidebar.button("Entrar"):
         ok, res = authenticate(login_user, login_pass)
         if ok:
             st.session_state["user"] = res
             st.success(f"Bem-vindo, {res['full_name'] or res['username']}!")
-            st.session_state["rerun"] = True
-            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.stop()
+            st.experimental_rerun = lambda: st.experimental_rerun()  # fallback
         else:
             st.error(res)
 
@@ -283,6 +259,7 @@ def page_home():
 
 def page_register():
     st.header("📝 Registrar novo usuário")
+    st.write("Preencha os dados para entrar na rede.")
     col1, col2 = st.columns([2,1])
     with col1:
         reg_user = st.text_input("Usuário (único)", key="reg_user_page")
@@ -291,13 +268,14 @@ def page_register():
         reg_pix = st.text_input("Chave PIX (opcional)", key="reg_pix_page")
     with col2:
         reg_pass = st.text_input("Senha", type="password", key="reg_pass_page")
-        reg_ref = st.text_input("Indicador (username) - opcional", key="reg_ref_page")
-        st.write("")
-        if st.button("Registrar", key="reg_submit_page"):
+        query_params = st.experimental_get_query_params()
+        ref_id = int(query_params.get("ref")[0]) if "ref" in query_params else None
+        st.write("Seu indicador será definido automaticamente se você entrou pelo link de indicação.")
+        if st.button("Registrar"):
             if not reg_user or not reg_pass or not reg_full:
                 st.error("Preencha usuário, nome completo e senha.")
             else:
-                ok, msg = create_user(reg_user, reg_email or None, reg_pass, reg_full, reg_pix or None, reg_ref or None)
+                ok, msg = create_user(reg_user, reg_email or None, reg_pass, reg_full, reg_pix or None, ref_id)
                 if ok:
                     st.success(msg)
                     st.info("Agora faça login pela barra lateral.")
@@ -340,19 +318,19 @@ def page_rede_doacoes():
                     st.session_state["user"]["pix_key"] = new_pix
                 else:
                     st.error(msg)
-            st.write("")
             if st.button("Registrar Doação", key=f"btn_donate_{user['id']}"):
                 ok, msg = record_donation(user["id"])
                 if ok:
                     st.success(msg)
                     refreshed = get_user_by_id(user["id"])
-                    st.session_state["user"]["pix_key"] = refreshed[7]
-                    st.session_state["user"]["stage"] = refreshed[8]
-                    st.session_state["user"]["received_stage_donations"] = refreshed[9]
+                    if refreshed:
+                        st.session_state["user"]["pix_key"] = refreshed[7]
+                        st.session_state["user"]["stage"] = refreshed[8]
+                        st.session_state["user"]["received_stage_donations"] = refreshed[9]
                 else:
                     st.error(msg)
     else:
-        st.warning("Você não possui indicador (referrer) definido.")
+        st.warning("Você não possui indicador (referrer) definido. Use um link de indicação.")
 
     st.markdown("---")
     sent, received = listar_doacoes(user["id"])
@@ -367,16 +345,6 @@ def page_rede_doacoes():
         else:
             st.write("Nenhuma doação recebida.")
 
-    # Rede binária visual
-    st.markdown("### 🌳 Rede Binária")
-    def build_binary_tree(uid, level=0):
-        row = db_query("SELECT id, username, full_name FROM users WHERE referrer_id = ?", (uid,))
-        if row:
-            for r in row:
-                st.markdown(" " * (level*4) + f"➡️ {r[2]} ({r[1]})")
-                build_binary_tree(r[0], level+1)
-    build_binary_tree(user["id"])
-
 def page_admin():
     require_login()
     user = st.session_state["user"]
@@ -388,10 +356,13 @@ def page_admin():
     st.dataframe(df, use_container_width=True)
 
     st.subheader("Excluir usuário")
-    del_user_id = st.number_input("ID do usuário a excluir", min_value=1, step=1)
-    if st.button("Excluir usuário"):
-        db_execute("DELETE FROM users WHERE id = ?", (del_user_id,))
-        st.success(f"Usuário {del_user_id} excluído.")
+    del_user_id = st.number_input("ID do usuário para excluir", min_value=1, step=1)
+    if st.button("Excluir"):
+        try:
+            db_execute("DELETE FROM users WHERE id = ?", (del_user_id,))
+            st.success("Usuário excluído com sucesso.")
+        except Exception as e:
+            st.error(f"Erro ao excluir usuário: {e}")
 
 # ===============================
 # ROTEAMENTO
@@ -408,5 +379,5 @@ PAGES = {
 # RODA A U.I.
 # ===============================
 ui_sidebar_login()
-choice = st.sidebar.selectbox("Menu", list(PAGES.keys()), index=0, key="menu_select")
+choice = st.sidebar.selectbox("Menu", list(PAGES.keys()), index=0)
 PAGES[choice]()
