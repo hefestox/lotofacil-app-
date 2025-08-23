@@ -20,7 +20,6 @@ STAGE_AMOUNTS = {1: 50.0, 2: 100.0, 3: 300.0}
 STAGE_MAX = 3
 STAGE_TARGET_DONATIONS = 12
 
-
 # ===============================
 # BANCO (SQLite)
 # ===============================
@@ -29,7 +28,6 @@ def get_conn():
     conn = sqlite3.connect("app.db", check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
-
 
 def init_db():
     conn = get_conn()
@@ -75,14 +73,12 @@ def init_db():
     """)
     conn.commit()
 
-
 def db_execute(query, params=()):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(query, params)
     conn.commit()
     return cur
-
 
 def db_query(query, params=(), as_df=False):
     conn = get_conn()
@@ -92,9 +88,7 @@ def db_query(query, params=(), as_df=False):
     cur.execute(query, params)
     return cur.fetchall()
 
-
 init_db()
-
 
 # ===============================
 # AUTENTICAÇÃO / HELPERS
@@ -102,13 +96,11 @@ init_db()
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
-
 def check_password(password: str, hashed: str) -> bool:
     try:
         return bcrypt.checkpw(password.encode(), hashed.encode())
     except Exception:
         return False
-
 
 def log_action(user_id, action, payload=None):
     db_execute(
@@ -116,8 +108,7 @@ def log_action(user_id, action, payload=None):
         (user_id, action, json.dumps(payload) if payload else None, datetime.utcnow().isoformat())
     )
 
-
-def create_user(username: str, email: str, password: str, full_name: str, pix_key: str, referrer_username: str | None):
+def create_user(username: str, email: str, password: str, full_name: str, pix_key: str, referrer_username: str|None):
     now = datetime.utcnow().isoformat()
     ph = hash_password(password)
     ref_id = None
@@ -138,20 +129,17 @@ def create_user(username: str, email: str, password: str, full_name: str, pix_ke
     except sqlite3.IntegrityError as e:
         return False, f"Erro: usuário ou e-mail já existe. ({e})"
 
-
 def get_user_by_username(username: str):
     rows = db_query("""
         SELECT id, username, email, password_hash, role, plan, full_name, pix_key, stage, received_stage_donations, referrer_id
         FROM users WHERE username = ?""", (username,))
     return rows[0] if rows else None
 
-
 def get_user_by_id(uid: int):
     rows = db_query("""
         SELECT id, username, email, password_hash, role, plan, full_name, pix_key, stage, received_stage_donations, referrer_id
         FROM users WHERE id = ?""", (uid,))
     return rows[0] if rows else None
-
 
 def authenticate(username: str, password: str):
     user = get_user_by_username(username)
@@ -164,22 +152,18 @@ def authenticate(username: str, password: str):
                       "stage": stage, "received_stage_donations": recv, "referrer_id": ref_id}
     return False, "Senha inválida."
 
-
 def require_login():
     if not st.session_state.get("user"):
         st.warning("Faça login para continuar.")
         st.stop()
-
 
 def update_pix(uid: int, new_pix: str):
     db_execute("UPDATE users SET pix_key = ? WHERE id = ?", (new_pix, uid))
     log_action(uid, "UPDATE_PIX", {"pix": new_pix})
     return True, "Chave PIX atualizada."
 
-
 def get_stage_amount(stage: int) -> float:
     return STAGE_AMOUNTS.get(stage, STAGE_AMOUNTS[1])
-
 
 def get_donation_target(uid: int):
     row = db_query("""
@@ -188,7 +172,6 @@ def get_donation_target(uid: int):
         JOIN users u2 ON u1.referrer_id = u2.id
         WHERE u1.id = ?""", (uid,))
     return row[0] if row else None
-
 
 def record_donation(from_uid: int):
     tgt = get_donation_target(from_uid)
@@ -216,7 +199,6 @@ def record_donation(from_uid: int):
         db_execute("UPDATE users SET received_stage_donations = ? WHERE id = ?", (recv_count, to_uid))
     return True, f"Doação registrada e confirmada para {to_full} (R$ {amount:.2f})."
 
-
 def listar_doacoes(uid: int):
     sent = db_query("""
         SELECT d.id, u.username AS para, d.amount, d.stage, d.status, d.created_at
@@ -231,7 +213,6 @@ def listar_doacoes(uid: int):
         WHERE d.to_user_id = ? ORDER BY d.id DESC
     """, (uid,), as_df=True)
     return sent, received
-
 
 # ===============================
 # UI: Sidebar (login ou logout)
@@ -248,7 +229,8 @@ def ui_sidebar_login():
         st.sidebar.caption(f"Stage: {u['stage']}")
         if st.sidebar.button("Sair", key="logout_btn"):
             st.session_state["user"] = None
-            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.stop()
+            st.experimental_rerun = lambda: st.experimental_set_query_params()  # substitui rerun
+            st.experimental_rerun()
         st.sidebar.divider()
         st.sidebar.markdown("Menu principal abaixo.")
         return
@@ -261,10 +243,10 @@ def ui_sidebar_login():
         if ok:
             st.session_state["user"] = res
             st.success(f"Bem-vindo, {res['full_name'] or res['username']}!")
-            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.stop()
+            st.experimental_rerun = lambda: st.experimental_set_query_params()
+            st.experimental_rerun()
         else:
             st.error(res)
-
 
 # ===============================
 # Páginas
@@ -282,10 +264,19 @@ def page_home():
     c3.metric("Estágio 3", "R$ 300")
     st.caption("Receba 12 doações para subir de estágio.")
 
+    st.markdown("### 💰 Investimento e retorno esperado")
+    invest_table = pd.DataFrame({
+        "Stage": [1,2,3],
+        "Doação por Stage (R$)": [50,100,300],
+        "Doações enviadas": [12,12,12],
+        "Investimento total (R$)": [600,1200,3600],
+        "Recebimento esperado (R$)": [600,1200,3600]
+    })
+    st.table(invest_table)
 
 def page_register():
     st.header("📝 Registrar novo usuário")
-    col1, col2 = st.columns([2, 1])
+    col1, col2 = st.columns([2,1])
     with col1:
         reg_user = st.text_input("Usuário (único)", key="reg_user_page")
         reg_full = st.text_input("Nome completo", key="reg_full_page")
@@ -306,49 +297,33 @@ def page_register():
                 else:
                     st.error(msg)
 
-
 def page_dashboard():
     require_login()
     user = st.session_state["user"]
     st.header(f"🏠 Dashboard — {user['full_name'] or user['username']}")
-    # Mostra métricas
     c1, c2, c3 = st.columns(3)
     c1.metric("Stage atual", user["stage"])
     c2.metric("Recebidas (atual)", user["received_stage_donations"])
     c3.metric("PIX", user["pix_key"] or "—")
     st.markdown("---")
-
-    # Quadro investimento/retorno
-    st.subheader("💰 Investimento e retorno esperado")
-    stages_data = []
-    for s in range(1, STAGE_MAX + 1):
-        amount = STAGE_AMOUNTS[s]
-        invest = amount * STAGE_TARGET_DONATIONS
-        stages_data.append({"Stage": s, "Doação por Stage (R$)": amount,
-                            "Doações enviadas": STAGE_TARGET_DONATIONS,
-                            "Investimento total (R$)": invest,
-                            "Recebimento esperado (R$)": invest})
-    df_stage = pd.DataFrame(stages_data)
-    st.table(df_stage)
-
+    st.info("Acesse 'Rede / Doações' para ver quem receberá sua doação e registrar suas ações.")
 
 def page_rede_doacoes():
     require_login()
     user = st.session_state["user"]
-    st.header("🤝 Rede / Doações (Rede Binária)")
-
-    # Beneficiário
+    st.header("🤝 Rede / Doações - Binário")
+    st.write(f"**Stage atual:** {user['stage']}")
     tgt = get_donation_target(user["id"])
     if tgt:
         to_id, to_username, to_full, to_pix = tgt
-        left, right = st.columns([3, 2])
-        with left:
+        col1, col2 = st.columns([3,2])
+        with col1:
             st.subheader("Beneficiário (seu indicador)")
             st.markdown(f"**Nome:** {to_full}")
             st.markdown(f"**Usuário:** {to_username}")
             st.markdown(f"**PIX:** {to_pix or '—'}")
             st.markdown(f"**Valor a doar:** R$ {get_stage_amount(user['stage']):.2f}")
-        with right:
+        with col2:
             st.subheader("Ações")
             new_pix = st.text_input("Atualizar sua PIX", value=user["pix_key"] or "", key=f"pix_input_{user['id']}")
             if st.button("Salvar PIX", key=f"btn_save_pix_{user['id']}"):
@@ -371,8 +346,9 @@ def page_rede_doacoes():
                 else:
                     st.error(msg)
     else:
-        st.warning("Você não possui indicador (referrer) definido.")
+        st.warning("Você não possui indicador definido.")
 
+    # Listar doações
     st.markdown("---")
     sent, received = listar_doacoes(user["id"])
     with st.expander("📤 Doações enviadas"):
@@ -386,7 +362,6 @@ def page_rede_doacoes():
         else:
             st.write("Nenhuma doação recebida.")
 
-
 def page_admin():
     require_login()
     user = st.session_state["user"]
@@ -394,17 +369,19 @@ def page_admin():
         st.warning("Área restrita a administradores.")
         st.stop()
     st.header("⚙️ Painel Admin")
-    df = db_query(
-        "SELECT id, username, full_name, email, plan, stage, received_stage_donations, pix_key, referrer_id, created_at FROM users",
-        as_df=True)
+    df = db_query("SELECT id, username, full_name, email, plan, stage, received_stage_donations, pix_key, referrer_id, created_at FROM users", as_df=True)
     st.dataframe(df, use_container_width=True)
-    st.markdown("---")
-    st.subheader("Excluir usuário")
-    uid_del = st.number_input("ID do usuário a excluir", min_value=1, step=1)
-    if st.button("Excluir usuário"):
-        db_execute("DELETE FROM users WHERE id = ?", (uid_del,))
-        st.success(f"Usuário {uid_del} excluído.")
 
+    st.markdown("---")
+    st.subheader("Ações de Admin")
+    user_to_delete = st.text_input("Digite o username do usuário para excluir")
+    if st.button("Excluir Usuário"):
+        row = get_user_by_username(user_to_delete)
+        if row:
+            db_execute("DELETE FROM users WHERE username = ?", (user_to_delete,))
+            st.success(f"Usuário {user_to_delete} excluído com sucesso.")
+        else:
+            st.error("Usuário não encontrado.")
 
 # ===============================
 # ROTEAMENTO
