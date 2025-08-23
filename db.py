@@ -1,20 +1,13 @@
-# db/__init__.py
 import sqlite3
 import pandas as pd
 
 DB_FILE = "app.db"
 
-# ==========================
-# Conexão com o banco
-# ==========================
 def get_conn():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
-# ==========================
-# Execução de comandos
-# ==========================
 def db_execute(query, params=()):
     conn = get_conn()
     cur = conn.cursor()
@@ -22,9 +15,6 @@ def db_execute(query, params=()):
     conn.commit()
     return cur
 
-# ==========================
-# Consultas
-# ==========================
 def db_query(query, params=(), as_df=False):
     conn = get_conn()
     if as_df:
@@ -33,8 +23,4 @@ def db_query(query, params=(), as_df=False):
     cur.execute(query, params)
     return cur.fetchall()
 
-# ==========================
-# Função auxiliar de debug
-# ==========================
-def debug_print(var_name, var_value):
-    print(f"{var_name}: {var_value}")
+
